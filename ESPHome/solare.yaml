@@ -1,0 +1,2367 @@
+esphome:
+  name: centralesolare
+  friendly_name: Centrale_Solare
+  platformio_options:
+    board_build.flash_mode: dio
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+ota:
+  - platform: esphome
+    password: ""
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO43
+  mosi_pin: GPIO44
+  miso_pin: GPIO42
+  cs_pin: GPIO41
+  interrupt_pin: GPIO2
+  reset_pin: GPIO1
+  manual_ip:
+    static_ip: 192.168.1.xxx    # Change according to your favorite address
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+    dns1: 8.8.8.8       # DNS di Google
+    dns2: 8.8.4.4       # DNS di Google
+
+web_server:
+  port: 80
+  version: 2
+  auth:
+    username: user
+    password: password
+  # sorting_groups:
+  #   - id: ordine_temp
+  #     name: "Temperature"
+  #     sorting_weight: 10
+  #   - id: ordine_comandi
+  #     name: "Comandi"
+  #     sorting_weight: 20
+  #   - id: ordine_tempi
+  #     name: "Tempi di funzionamento"
+  #     sorting_weight: 30
+  #   - id: ordine_config
+  #     name: "Configurazione"
+  #     sorting_weight: 40
+  #   - id: ordine_sensor
+  #     name: "Controlli"
+  #     sorting_weight: 50
+  #   - id: ordine_dia
+  #     name: "Diagnostica"
+  #     sorting_weight: 80
+  #   - id: ordine_varie
+  #     name: "Varie"
+  #     sorting_weight: 90
+
+logger:
+  level: INFO  # livello generale: warning e errori
+  hardware_uart: USB_SERIAL_JTAG  # usa porta USB debug dell'ESP32-S3
+  logs:
+    centrale: INFO       # log utile per lo stato della centrale
+    custom: WARN         # log per pompe/valvole/script → warning ok
+    pompa1: WARN         # solo se accesa/spenta
+    SPLASH: NONE         # disattiva log iniziali irrilevanti
+    script: WARN         # blocca log da esecuzioni continue
+    component: ERROR     # componenti generici
+    sensor: ERROR        # evita "state updated" ogni secondo
+    display: ERROR       # (se presente) evita log LCD inutili
+    mqtt: INFO         # <-- VEDI attività MQTT (connessioni/pubblicazioni)
+    mqtt.component: INFO  # <-- (opzionale) per log MQTT legati ai componenti    
+
+mqtt:
+  broker: 192.168.1.xxx     # change according to your mqtt server
+  port: 1883
+  on_json_message:
+    - topic: "Solare/Pompa 1/Controllo"
+      then:
+        - lambda: |-
+            if (x.containsKey("stato")) {
+              bool stato = x["stato"];
+              if (stato) {
+                id(richiesta_softstart) = true;
+                id(pompa1).turn_on();
+              } else {
+                id(pompa1).turn_off();
+              }
+            }
+
+            if (x.containsKey("percentuale")) {
+              int nuova_percentuale = int(x["percentuale"]);
+              if (nuova_percentuale != id(pwm_percentuale)) {
+                id(pwm_soft_start_active) = true;
+                id(pwm_soft_current) = id(pwm_percentuale);
+                id(pwm_soft_target) = nuova_percentuale;
+              }
+            }
+
+            if (x.containsKey("manuale")) {
+              id(pompa1_manual_mode) = bool(x["manuale"]);
+            }
+        - script.execute: aggiorna_stato_pompa1_mqtt
+    - topic: Solare/Setpoint/Antigelo/set
+      then:
+        - lambda: |-
+            if (x.containsKey("value")) {
+              float val = x["value"];
+              if (abs(id(setpoint_antigelo).state - val) > 0.1) {
+                id(setpoint_antigelo).publish_state(val);
+              }
+              id(temperatura_antigelo) = val;
+              ESP_LOGI("mqtt", "Setpoint Antigelo aggiornato da MQTT: %.1f", val);
+            }
+    - topic: Solare/Setpoint/Massima/set
+      then:
+        - lambda: |-
+            if (x.containsKey("value")) {
+              float val = x["value"];
+              id(setpoint_temp_max).publish_state(val);
+              id(temperatura_massima) = val;
+              ESP_LOGI("mqtt", "Setpoint Massima aggiornato da MQTT: %.1f", val);
+            }
+    - topic: Solare/Setpoint/DeltaT/set
+      then:
+        - lambda: |-
+            if (x.containsKey("value")) {
+              float val = x["value"];
+              id(setpoint_delta_t).publish_state(val);
+              id(delta_t_setpoint) = val;
+              ESP_LOGI("mqtt", "Setpoint Delta T aggiornato da MQTT: %.1f", val);
+            }
+    - topic: Solare/Setpoint/Delta T Min/set
+      then:
+        - lambda: |-
+            if (x.containsKey("value")) {
+              float val = x["value"];
+              id(setpoint_delta_min).publish_state(val);
+              ESP_LOGI("mqtt", "Delta T Minimo aggiornato da MQTT: %.1f", val);
+            }            
+
+external_components:
+  - source: "custom_components/zerocross_pwm"
+
+globals:
+  - id: primo_ingresso_menu
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: centralina_attiva
+    type: bool
+    restore_value: true
+    initial_value: "true"
+
+  - id: richiesta_softstart
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: autorizzato_avvio_pwm
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pwm_livello_attivo
+    type: int
+    restore_value: no
+    initial_value: '0'  # 0 = spento, 1 = 30%, 2 = 50%, 3 = 75%, 4 = 100%
+    
+  - id: menu_attivo
+    type: int
+    restore_value: no
+    initial_value: "0"  # 0 significa nessun menù attivo, numeri successivi corrispondono ai vari menù
+    
+  - id: delta_t_setpoint
+    type: float
+    restore_value: no
+    initial_value: "8.0"
+    
+  - id: splash_screen
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: temperatura_antigelo
+    type: float
+    restore_value: no
+    initial_value: "5.0"
+    
+  - id: temperatura_massima
+    type: float
+    restore_value: no
+    initial_value: "100.0"
+    
+  - id: schermata_attiva
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: pompa1_stato
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa1_manual_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa2_stato
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa2_manual_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: display_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+  - id: scorrimento_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'false'    
+
+  - id: last_activity_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'  # Inizializza con 0 (nessuna attività iniziale)
+
+  - id: pompa1_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa1_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa1_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: ev1_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev1_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev1_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: pompa2_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa2_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa2_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'   
+
+  - id: ev2_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev2_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev2_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: sopra_soglia_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: era_sopra
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: tempo_totale
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_giorno
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_settimana
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_mese
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'    
+
+  - id: pwm_percentuale
+    type: int
+    restore_value: no
+    initial_value: '0'  # da 0 a 100
+  - id: pwm_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: pwm_soft_start_active
+    type: bool
+    initial_value: "false"
+  - id: pwm_soft_target
+    type: int
+    initial_value: "0"
+  - id: pwm_soft_current
+    type: int
+    initial_value: "0"
+
+  - id: centrale_scroll_index
+    type: int
+    restore_value: no
+    initial_value: '0'    
+
+  - id: pompa1_consumo_kwh
+    type: float
+    restore_value: no
+    initial_value: "0.0"    
+  - id: pompa2_consumo_kwh
+    type: float
+    restore_value: no
+    initial_value: "0.0"    
+
+  - id: pwm_stato_logico
+    type: std::string
+    restore_value: no
+    initial_value: '"SPENTO"'
+
+  - id: pwm_potenza_attuale
+    type: float
+    restore_value: no
+    initial_value: '0.0' 
+
+  - id: prima_volta
+    type: bool
+    initial_value: "true"
+
+i2c:
+  sda: GPIO08
+  scl: GPIO18
+  scan: true
+  frequency: 400kHz
+  id: bus_a
+
+uart:
+  - id: uart_bus
+    baud_rate: 9600
+    tx_pin: 16
+    rx_pin: 15
+
+ads1115:
+  - address: 0x48
+
+display:
+  - platform: lcd_pcf8574
+    dimensions: 20x4
+    address: 0x27
+    update_interval: 1000ms
+    user_characters:
+      - position: 7  # freccia su
+        data: [0b00100, 0b01110, 0b11111, 0b11111, 0b00000, 0b00000, 0b00000, 0b00000]
+      - position: 1  # freccia giù
+        data: [0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b01110, 0b00100]
+      - position: 2  # sole ☀
+        data: [0b00100, 0b10101, 0b01110, 0b11111, 0b01110, 0b10101, 0b00100, 0b00000]
+      - position: 3  # simbolo °
+        data: [0b01110, 0b01010, 0b01110, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]       
+      - position: 4  # simbolo Delta (Δ)
+        data: [0b00100, 0b00100, 0b01010, 0b01010, 0b10001, 0b10001, 0b11111, 0b00000]         
+
+    lambda: |- 
+      // ✅ Prima lo splash screen, se attivo
+      if (id(splash_screen)) {
+        char sole = '\x02';
+        it.backlight();
+        it.print(0, 0, "+------------------+");
+        it.printf(0, 1,"|   %c CENTRALE %c   |", sole, sole);
+        it.print(0, 2, "|   SOLARE v3.1    |");
+        it.print(0, 3, "+------------------+");
+        return;
+      }
+      if (!id(display_attivo)) {
+        it.clear();
+        it.no_backlight();
+        return;
+      }
+      char gradi = '\x03';
+      
+      if (!id(scorrimento_attivo)) {
+        char gradi = '\x03';
+        char delta = '\x04';
+
+        // Riga 0: ora e data o messaggio di sync
+        auto current_time = id(sntp_time).now();
+        if (current_time.is_valid()) {
+          char time_str[9];
+          char date_str[11];
+          sprintf(time_str, "%02d:%02d:%02d", current_time.hour, current_time.minute, current_time.second);
+          sprintf(date_str, "%02d/%02d/%04d", current_time.day_of_month, current_time.month, current_time.year);
+          it.printf(0, 0, "%s %s", time_str, date_str);
+        } else {
+          it.print(0, 0, "   Sync ora/data...   ");
+        }
+
+        // Riga 1: stato centrale
+        it.print(0, 1, id(centralina_attiva) ? " CENTRALE  ATTIVA " : " CENTRALE  SPENTA ");
+
+        // Riga 2: Tpan e Delta T
+        it.printf(0, 2, " Tpan:%.1f%cC %cT:%.1f",
+                  id(temp_pannelli_solari).state, gradi,
+                  delta, id(delta_t).state);
+
+        // Riga 3: S1 o S2 e stato pompa
+        float s = id(use_solare_1) ? id(temp_solare_1).state : id(temp_solare_2).state;
+        const char *sonda = id(use_solare_1) ? "S1" : "S2";
+        const char *pompa = id(pompa1).state ? "ON " : "OFF";
+
+        it.printf(0, 3, " %s:%.1f%cC Pompa:%s", sonda, s, gradi, pompa);
+
+        return;
+      }
+      if (id(menu_attivo) == 1) {
+        it.backlight();
+        it.print(0, 0, "-Modifica parametri-");
+        it.printf(0, 1, "Antigelo:   %4.1f%cC", id(temperatura_antigelo), gradi);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+        return;
+      } else if (id(menu_attivo) == 2) {
+        it.backlight();
+        it.print(0, 0, "-Modifica parametri-");
+        it.printf(0, 1, "Temp Max:   %4.1f%cC", id(temperatura_massima), gradi);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;  
+        return;      
+      } else if (id(menu_attivo) == 3) {
+        it.backlight();
+        it.print(0, 0, "-Modifica parametri-");
+        it.printf(0, 1, "Delta T:    %4.1f%cC", id(delta_t_setpoint), gradi);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+        return;
+      } else if (id(menu_attivo) == 4) {
+        it.backlight();
+        const char* stato_pompa = id(pompa1).state ? "ON " : "OFF";
+        it.print(0, 0, "-Modifica parametri-");
+        it.printf(0, 1, "Pompa 1: %s", stato_pompa);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+        return;
+      } else if (id(menu_attivo) == 5) {
+        it.backlight();
+        std::string stato_valvola = id(valvola1).state ? "ON " : "OFF";
+        it.print(0, 0, "-Modifica parametri-");
+        it.print(0, 1, "Valvola 1: " + stato_valvola);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+        return;
+      } else if (id(menu_attivo) == 6) {
+        it.backlight();
+        const char* stato_pompa = id(pompa2).state ? "ON " : "OFF";
+        it.print(0, 0, "-Modifica parametri-");
+        it.printf(0, 1, "Pompa 2: %s", stato_pompa);
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+        return;
+      } else if (id(menu_attivo) == 7) {
+        it.backlight();
+        std::string stato_valvola = id(valvola2).state ? "ON " : "OFF";
+        it.print(0, 0, "-Modifica parametri-");
+        it.print(0, 1, "Valvola 2: " + stato_valvola);
+        it.print(0, 3, "^/v modif    OK conf");              
+        id(primo_ingresso_menu) = false;
+        return;
+      } else {
+        if (id(schermata_attiva) == 0) {
+          it.backlight();
+          // Mostra la temperatura con una freccia basata sul trend
+          char arrow = '=';  // Freccia destra (default)
+          if (id(temp_trend_pannelli).state > 0) {
+            arrow = '\x07';  // Freccia su
+          } else if (id(temp_trend_pannelli).state < 0) {
+            arrow = '\x01';  // Freccia giù
+          }
+          it.printf(0, 0, "- PANNELLI  SOLARI -");
+          it.printf(0, 1, "  Temp:%5.1f%cC %c", id(temp_pannelli_solari).state, gradi, arrow);
+          it.printf(0, 2, "  Delta T:%5.1f%cC", id(delta_t).state, gradi);
+          it.printf(0, 3, " \x01:%4.0f%cC  \x07:%4.0f%cC", id(temp_mandata_solare).state, gradi, id(temp_ritorno_solare).state, gradi);
+        } else if (id(schermata_attiva) == 1) {
+          it.backlight();
+          it.printf(0, 0, "- SERBATOI  SOLARE -"); 
+          it.printf(0, 1, "S1:%4.0f%cC Out:%4.0f%cC", id(temp_solare_1).state, gradi, id(temp_solare1_sonde).state, gradi);
+          it.printf(0, 2, "S2:%4.0f%cC Out:%4.0f%cC", id(temp_solare_2).state, gradi, id(temp_solare2_sonde).state, gradi);
+          it.printf(0, 3, "    ACS:%4.0f%cC", id(temp_acs_sonde).state, gradi);
+        } else if (id(schermata_attiva) == 2) {
+          it.backlight();
+          const char* stato_pompa1 = id(pompa1).state ? "ACCESA " : "SPENTA";
+          std::string stato_valvola1 = id(valvola1).state ? "SERBATOIO 1 " : "SERBATOIO 2";
+          it.print(0, 0, "- GESTIONE  SOLARE -");
+          it.printf(0, 1, "Pompa: %s", stato_pompa1);
+          it.printf(0, 2, "PWM: [");
+          int pwm_len = id(pwm_percentuale) / 10;  // da 0 a 10 blocchi
+          for (int i = 0; i < 10; i++) {
+            it.print(i + 6, 2, i < pwm_len ? "\xFF" : " ");
+          }
+          it.printf(17, 2, "] %3d%%", id(pwm_percentuale));
+          it.printf(0, 3, "%-7s V:%s", id(pwm_stato_logico).c_str(), stato_valvola1.c_str());
+          //it.print(0, 3, "Valvola: " + stato_valvola1);
+        } else if (id(schermata_attiva) == 3) {  
+          it.backlight();
+          const char* stato_pompa2 = id(pompa2).state ? "ACCESA " : "SPENTA";
+          std::string stato_valvola2 = id(valvola2).state ? "SERBATOIO " : "CASA";          
+          it.print(0, 0, "-STATO  ACQUA CALDA-");
+          it.print(0, 1, "  ** NON ATTIVO ** ");
+          it.printf(0, 2, "Pompa: %s", stato_pompa2);
+          it.print(0, 3, "Valvola: " + stato_valvola2);          
+        } else if (id(schermata_attiva) == 4) {  
+          it.backlight();
+          it.print(0, 0, " - RETE  INTERNET -");
+          it.printf(0, 1, "IP:  %s", id(ip_address).state.c_str());
+          it.printf(0, 2, "MAC:");
+          it.printf(0, 3, " %s", id(mac_address).state.c_str());     
+        }
+      }
+
+number:
+  - platform: template
+    name: "Setpoint Antigelo"
+    id: setpoint_antigelo
+    min_value: -10
+    max_value: 20
+    step: 0.5
+    initial_value: 5.0
+    unit_of_measurement: "°C"
+    optimistic: true
+    on_value:
+      then:
+        - lambda: |-
+            static float last_antigelo  = -999;
+            if (abs(x - last_antigelo ) > 0.1) {
+              mqtt::global_mqtt_client->publish("Solare/Setpoint/Antigelo", std::to_string(x), 0, true);
+              last_antigelo  = x;
+            }
+    # web_server:
+    #   sorting_group_id: ordine_config
+
+  - platform: template
+    name: "Setpoint Temp. Massima"
+    id: setpoint_temp_max
+    min_value: 50
+    max_value: 130
+    step: 1
+    initial_value: 100.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    on_value:
+      then:
+        - lambda: |-
+            static float last_massima = -999;
+            if (abs(x - last_massima) > 0.1) {
+              mqtt::global_mqtt_client->publish("Solare/Setpoint/Massima", std::to_string(x), 0, true);
+              last_massima = x;
+            }
+    # web_server:
+    #   sorting_group_id: ordine_config
+
+  - platform: template
+    name: "Setpoint Delta T"
+    id: setpoint_delta_t
+    min_value: 0
+    max_value: 15
+    step: 0.5
+    initial_value: 8.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    on_value:
+      then:
+        - lambda: |-
+            static float last_deltat = -999;
+            if (abs(x - last_deltat) > 0.1) {
+              mqtt::global_mqtt_client->publish("Solare/Setpoint/Delta T", std::to_string(x), 0, true);
+              last_deltat = x;
+            }
+    # web_server:
+    #   sorting_group_id: ordine_config
+
+  - platform: template
+    name: "Setpoint Delta T Minimo"
+    id: setpoint_delta_min
+    min_value: 0.5
+    max_value: 5.0
+    step: 0.1
+    initial_value: 2.0
+    optimistic: true
+    unit_of_measurement: "°C"
+    on_value:
+      then:
+        - lambda: |-
+            static float last_deltat_min = -999;
+            if (abs(x - last_deltat_min) > 0.1) {
+              mqtt::global_mqtt_client->publish("Solare/Setpoint/Delta T Minimo", std::to_string(x), 0, true);
+              last_deltat_min = x;
+            }
+
+  - platform: template
+    name: "PWM Pompa 1 %"
+    id: set_pwm_pompa1
+    min_value: 0
+    max_value: 100
+    step: 5
+    optimistic: true
+    unit_of_measurement: "%"
+    on_value:
+      then:
+        - lambda: |-
+            static float last_pwm_pompa1 = -999;
+            if (abs(x - last_pwm_pompa1) > 0.1) {
+              mqtt::global_mqtt_client->publish("Solare/Pompa 1/PWM", std::to_string(x), 0, true);
+              last_pwm_pompa1 = x;
+            }
+    # web_server:
+    #   sorting_group_id: ordine_comandi     
+
+  - platform: template
+    name: "Velocità Pompa 2"
+    id: velocita_pompa2
+    min_value: 1
+    max_value: 3
+    step: 1
+    unit_of_measurement: "liv"
+    optimistic: true
+    on_value:
+      then:
+        - lambda: |-
+            if (x < 1 || x > 3) {
+              ESP_LOGW("pompa2", "⚠️ Valore fuori range per Velocità Pompa 2: %.1f. Reimposto a 1.", x);
+              id(velocita_pompa2).publish_state(1);
+            } else {
+              ESP_LOGI("pompa2", "✅ Velocità Pompa 2 impostata a: %d", int(x));
+            }
+        - mqtt.publish:
+            topic: Solare/Parametri/Velocita Pompa2
+            payload: !lambda 'return to_string(int(x));'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+# Sensore personalizzato per leggere i dati UART
+sensor:
+  - platform: ads1115
+    multiplexer: 'A0_GND'
+    id: bottoni
+    gain: 6.144
+    name: "Bottoni"
+    update_interval: 500ms
+    internal: true    
+
+  - platform: template
+    name: "Potenza Termica Istantanea"
+    id: potenza_termica
+    unit_of_measurement: "kW"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      const float cp = 4.18;  // kJ/kg·K
+      const float rho = 1.0;  // kg/l
+      float dt = id(delta_t).state;
+      float portata = 5.0; // litri/minuto (simulato o da sensore)
+      float potenza = (portata * rho * cp * dt) / 60.0;  // kW = kJ/min ÷ 60
+      return potenza / 1000.0;
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Energia Termica/Potenza
+            payload: !lambda 'return to_string(x);'
+            retain: true
+
+  - platform: template
+    name: "Energia Termica Giornaliera"
+    id: energia_termica_giorno
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    update_interval: 60s
+    lambda: |-
+      const float cp = 4.18;
+      const float rho = 1.0;
+      float dt = id(delta_t).state;
+      float portata = 5.0; // litri/minuto (simulato o da sensore)
+      float energia = (portata * rho * cp * dt * 60) / 3600.0 / 1000.0;  // energia minuto in kWh
+      return energia;
+
+  - platform: total_daily_energy
+    name: "Energia Termica Totale Giorno"
+    power_id: energia_termica_giorno
+    id: energia_termica_totale
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Energia Termica/Giorno
+            payload: !lambda 'return to_string(x);'
+            retain: true
+
+  - platform: mqtt_subscribe
+    name: "Temperatura Mandata Solare"
+    id: temp_mandata_solare
+    topic: "Caldaia/Temperature Solare/Mandata Solare"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: mqtt_subscribe
+    name: "Temperatura Ritorno Solare"
+    id: temp_ritorno_solare
+    topic: "Caldaia/Temperature Solare/Ritorno Solare"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: mqtt_subscribe
+    name: "Temperatura ACS Alta"
+    id: temp_acs_alta
+    topic: "Caldaia/Temperature ACS/ACS alta"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp
+
+  - platform: mqtt_subscribe
+    name: "Temperatura ACS Bassa"
+    id: temp_acs_esp
+    topic: "Caldaia/Temperature ACS/ACS"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Temperatura ACS sonde"
+    id: temp_acs_sonde
+    unit_of_measurement: "°C"
+    update_interval: 10s
+    lambda: |-
+      if (!isnan(id(temp_acs_alta).state)) {
+        return id(temp_acs_alta).state;
+      } else if (!isnan(id(temp_acs_esp).state)) {
+        return id(temp_acs_esp).state;
+      } else {
+        return NAN;
+      }
+    # web_server:
+    #   sorting_group_id: ordine_temp
+
+  - platform: mqtt_subscribe
+    name: "Temperatura Solare 1 sonde"
+    id: temp_solare1_sonde
+    topic: "Caldaia/Temperature Solare/Solare 1"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: mqtt_subscribe
+    name: "Temperatura Solare 2 sonde"
+    id: temp_solare2_sonde
+    topic: "Caldaia/Temperature Solare/Solare 2"
+    unit_of_measurement: "°C"
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Temperatura Pannelli Solari"
+    id: temp_pannelli_solari
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    on_value:
+      then:
+        - lambda: |-
+            static float last_temp = 0.0;
+            static int trend = 0;
+            if (x > last_temp) {
+              trend = 1;
+            } else if (x < last_temp) {
+              trend = -1;
+            } else {
+              trend = 0;
+            }
+            id(temp_trend_pannelli).publish_state(trend);
+            last_temp = x;
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Pannelli Solari
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+  
+  - platform: template
+    id: temp_trend_pannelli
+    name: "Trend Numerico Temperatura"
+    internal: true
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Trend Pannelli Solari   
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Temperatura Serbatoio Solare 1"
+    id: temp_solare_1
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Solare 1
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+  
+  - platform: template
+    name: "Temperatura Serbatoio Solare 2"
+    id: temp_solare_2
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Solare 2
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Temperatura Serbatoio ACS"
+    id: temp_acs
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/ACS
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Delta T"
+    id: delta_t
+    unit_of_measurement: "°C"
+    lambda: |-
+      float serbatoio = id(temp_solare_2).state;
+      if (id(use_solare_1).state) {
+        serbatoio = id(temp_solare_1).state;
+      }
+      return id(temp_pannelli_solari).state - serbatoio;
+    update_interval: 3s
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Delta T      
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+switch:
+  - platform: template
+    name: "Centralina Automatica"
+    id: centralina_switch
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(centralina_attiva) = true;
+          ESP_LOGI("centrale", "Controllo automatico ATTIVO");
+      - mqtt.publish:
+          topic: Solare/Centrale/Automatica/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          id(centralina_attiva) = false;
+          ESP_LOGW("centrale", "Controllo automatico DISATTIVATO");
+      - mqtt.publish:
+          topic: Solare/Centrale/Automatica/state
+          payload: "OFF"
+          retain: true
+    command_topic: Solare/Centrale/Automatica/command
+    state_topic: Solare/Centrale/Automatica/state
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: restart
+    name: "Solare Restart"
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Riavvia/state
+    command_topic: Solare/Riavvia/command
+    command_retain: true
+    # web_server:
+    #   sorting_group_id: ordine_config    
+
+  - platform: template
+    name: "Pompa 1 PWM"
+    id: pompa1
+    lambda: |-
+      return id(pwm_attivo) && id(pwm_percentuale) > 0;
+    turn_on_action:
+      - lambda: |-
+          id(pwm_attivo) = true;
+          if (id(pwm_percentuale) == 0) {
+            id(pwm_percentuale) = 100;
+          }
+          if (id(pwm_percentuale) > 0 && id(pompa1_start_time) == 0) {
+            id(pompa1_start_time) = millis();
+          }
+      - script.execute: aggiorna_stato_pompa1_mqtt
+    turn_off_action:
+      - lambda: |-
+          id(pwm_attivo) = false;
+          id(pwm_percentuale) = 0;
+          if (id(pompa1_start_time) > 0) {
+            unsigned long durata = (millis() - id(pompa1_start_time)) / 1000;
+            id(pompa1_last_duration_sec) = durata;
+            id(pompa1_total_time_sec) += durata;
+            id(pompa1_start_time) = 0;
+          }
+      - script.execute: aggiorna_stato_pompa1_mqtt
+    restore_mode: RESTORE_DEFAULT_OFF
+    # web_server:
+    #   sorting_group_id: ordine_comandi    
+
+  - platform: template
+    name: "Reset Consumo Pompa 1"
+    id: reset_pompa1_kwh
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: |-
+          id(pompa1_consumo_kwh) = 0.0;
+          ESP_LOGI("consumo", "Contatore Pompa 1 resettato.");
+      - switch.turn_off: reset_pompa1_kwh
+    # web_server:
+    #   sorting_group_id: ordine_tempi
+
+  - platform: gpio
+    name: "Pompa 2"
+    id: pompa2
+    pin: GPIO13
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(pompa2_start_time) = millis();
+        - mqtt.publish:
+            topic: Solare/Pompa 2/Posizione/state
+            payload: "ON"
+            retain: true
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(pompa2_start_time)) / 1000;
+            id(pompa2_last_duration_sec) = duration;
+            id(pompa2_total_time_sec) += duration;
+        - mqtt.publish:
+            topic: Solare/Pompa 2/Posizione/state
+            payload: "OFF"
+            retain: true
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 2
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 2/Posizione/state
+    command_topic: Solare/Pompa 2/Posizione/command
+    command_retain: true
+    
+  - platform: gpio
+    name: "Elettrovalvola 1 Solare"
+    id: valvola1
+    pin:
+      number: GPIO5
+      # One of INPUT or OUTPUT
+      mode:
+        output: true
+      inverted: false
+    restore_mode: ALWAYS_OFF  # RESTORE_DEFAULT_ON or RESTORE_DEFAULT_OFF or ALWAYS_OFF/ALWAYS_ON
+    #interlock: &interlock_group [valvola2, valvola3, valvola4, valvola5, valvola6]
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(ev1_start_time) = millis();
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 1/state
+            payload: "ON"
+            retain: true
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(ev1_start_time)) / 1000;
+            id(ev1_last_duration_sec) = duration;
+            id(ev1_total_time_sec) += duration;
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 1/state
+            payload: "OFF"
+            retain: true            
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Elettrovalvola 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Elettrovalvola 1/Posizione/state
+    command_topic: Solare/Elettrovalvola 1/Posizione/command
+    command_retain: true
+    # web_server:
+    #   sorting_group_id: ordine_comandi    
+
+  - platform: gpio
+    name: "Elettrovalvola 2 Solare"
+    id: valvola2
+    pin:
+      number: GPIO17
+      # One of INPUT or OUTPUT
+      mode:
+        output: true
+      inverted: true
+    restore_mode: ALWAYS_OFF  # RESTORE_DEFAULT_ON or RESTORE_DEFAULT_OFF or ALWAYS_OFF/ALWAYS_ON
+    #interlock: &interlock_group [valvola2, valvola3, valvola4, valvola5, valvola6]
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(ev2_start_time) = millis();
+        - lambda: |-
+            static bool last_stato = false;
+            if (!last_stato) {
+              mqtt::global_mqtt_client->publish("Solare/Pompa 1/state", std::string("ON"), 0, true);
+              last_stato = true;
+            }      
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(ev2_start_time)) / 1000;
+            id(ev2_last_duration_sec) = duration;
+            id(ev2_total_time_sec) += duration;    
+        - lambda: |-
+            static bool last_stato = true;
+            if (last_stato) {
+              mqtt::global_mqtt_client->publish("Solare/Pompa 1/state", std::string("OFF"), 0, true);
+              last_stato = false;
+            }     
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Elettrovalvola 2
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Elettrovalvola 2/Posizione/state
+    command_topic: Solare/Elettrovalvola 2/Posizione/command
+    command_retain: true
+    # web_server:
+    #   sorting_group_id: ordine_comandi    
+
+  - platform: gpio
+    name: "Pompa 1 Manuale Diretta (GPIO14)"
+    id: pompa1_gpio_direct
+    pin: GPIO14
+    restore_mode: ALWAYS_OFF
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 1/GPIO Manuale/state
+    command_topic: Solare/Pompa 1/GPIO Manuale/command
+    command_retain: true
+    # web_server:
+    #   sorting_group_id: ordine_comandi    
+
+  - platform: template
+    name: "Modalità Manuale Pompa 1"
+    id: pompa1_manual_cmd
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pompa1_manual_mode) = true;
+          id(pwm_stato_logico) = "MANUALE";
+          ESP_LOGI("pompa1", "Modalità manuale attiva");
+      - switch.turn_off: pompa1  # assicurati che si parta da spento
+      - mqtt.publish:
+          topic: Solare/Pompa 1/Pompa 1 modalità manuale/state
+          payload: "ON"
+          retain: true          
+    on_turn_off:
+      - lambda: |-
+          id(pompa1_manual_mode) = false;
+          ESP_LOGI("pompa1", "Modalità automatica attiva");
+      - mqtt.publish:
+          topic: Solare/Pompa 1/Pompa 1 modalità manuale/state
+          payload: "OFF"
+          retain: true          
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 1/Pompa 1 modalità manuale/state
+    command_topic: Solare/Pompa 1/Pompa 1 modalità manuale/command
+    command_retain: true          
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: template
+    name: "PWM Pompa 1 Attivo"
+    id: pwm_pompa1_enable
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pwm_attivo) = true;
+    on_turn_off:
+      - lambda: |-
+          id(pwm_attivo) = false;
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: template
+    name: "Pompa 1 ON/OFF Manuale"
+    id: pompa1_manuale_on_off
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          if (id(pompa1_manual_mode)) {
+            id(pwm_attivo) = true;
+            id(pwm_percentuale) = 100;
+            ESP_LOGI("pompa1", "Pompa 1 accesa in manuale");
+          }
+    on_turn_off:
+      - lambda: |-
+          if (id(pompa1_manual_mode)) {
+            id(pwm_attivo) = false;
+            id(pwm_percentuale) = 0;
+            ESP_LOGI("pompa1", "Pompa 1 spenta in manuale");
+          }    
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 1/Pompa 1 manuale/state
+    command_topic: Solare/Pompa 1/Pompa 1 manuale/command
+    command_retain: true              
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+      
+  - platform: template
+    name: "Modalità Manuale Pompa 2"
+    id: pompa2_manual_cmd
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pompa2_manual_mode) = true;
+          ESP_LOGI("pompa2", "Modalità manuale attiva");
+      - switch.turn_off: pompa2  # assicurati che si parta da spento
+      - mqtt.publish:
+          topic: Solare/Pompa 2/Pompa 2 modalità manuale/state
+          payload: "ON"
+          retain: true      
+    on_turn_off:
+      - lambda: |-
+          id(pompa2_manual_mode) = false;
+          ESP_LOGI("pompa2", "Modalità automatica attiva");
+      - mqtt.publish:
+          topic: Solare/Pompa 2/Pompa 2 modalità manuale/state
+          payload: "OFF"
+          retain: true          
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 2
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 2/Pompa 2 modalità manuale/state
+    command_topic: Solare/Pompa 2/Pompa 2 modalità manuale/command
+    command_retain: true              
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: template
+    name: "Pompa 2 ON/OFF Manuale"
+    id: pompa2_manuale_on_off
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          if (id(pompa2_manual_mode)) {
+            id(pompa2).turn_on();
+            ESP_LOGI("pompa2", "Pompa 2 accesa in manuale");
+          }
+    on_turn_off:
+      - lambda: |-
+          if (id(pompa2_manual_mode)) {
+            id(pompa2).turn_off();
+            ESP_LOGI("pompa2", "Pompa 2 spenta in manuale");
+          }       
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 2
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 2/Pompa 2 manuale/state
+    command_topic: Solare/Pompa 2/Pompa 2 manuale/command
+    command_retain: true              
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: template
+    name: "Reset Consumo Pompa 2"
+    id: reset_pompa2_kwh
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: |-
+          id(pompa2_consumo_kwh) = 0.0;
+          ESP_LOGI("consumo", "Contatore Pompa 2 resettato.");
+      - switch.turn_off: reset_pompa2_kwh
+    # web_server:
+    #   sorting_group_id: ordine_tempi
+
+script:
+  - id: cambia_valore_menu
+    mode: queued  # Permette l'esecuzione in coda senza bloccare
+    parameters:
+      direzione: int
+    then:
+      - lambda: |-
+          if (id(menu_attivo) == 1) {
+            id(temperatura_antigelo) += direzione * 0.5;
+          } else if (id(menu_attivo) == 2) {
+            id(temperatura_massima) += direzione * 1.0;
+          } else if (id(menu_attivo) == 3) {
+            id(delta_t_setpoint) += direzione * 0.5;
+          } else if (id(menu_attivo) == 4) {
+            if (direzione > 0) {
+              id(pompa1_manual_mode) = true;
+              id(pompa1).turn_on();
+            } else {
+              id(pompa1_manual_mode) = false;
+              id(pompa1).turn_off();
+            }
+          } else if (id(menu_attivo) == 5) {
+            if (direzione > 0) {
+              id(valvola1).turn_on();
+            } else {
+              id(valvola1).turn_off();
+            }
+          } else if (id(menu_attivo) == 6) {
+            if (direzione > 0) {
+              id(pompa2).turn_on();
+            } else {
+              id(pompa2).turn_off();
+            }
+          } else if (id(menu_attivo) == 7) {
+            if (direzione > 0) {
+              id(valvola2).turn_on();
+            } else {
+              id(valvola2).turn_off();
+            }
+          }
+          ESP_LOGI("MENU", "Valore modificato: %d", id(menu_attivo));
+  - id: aggiorna_stato_pompa1_mqtt
+    then:
+      - lambda: |-
+          static std::string last_pwm = "";
+          static std::string last_state = "";
+          static std::string last_mode = "";
+
+          std::string pwm = std::to_string(id(pwm_percentuale));
+          std::string stato = id(pompa1).state ? "ON" : "OFF";
+          std::string mode = id(pompa1_manual_mode) ? "MANUALE" : "AUTO";
+
+          if (pwm != last_pwm) {
+            mqtt::global_mqtt_client->publish("Solare/Pompa 1/PWM", pwm, 0, true);
+            last_pwm = pwm;
+          }
+          if (stato != last_state) {
+            mqtt::global_mqtt_client->publish("Solare/Pompa 1/state", stato, 0, true);
+            last_state = stato;
+          }
+          if (mode != last_mode) {
+            mqtt::global_mqtt_client->publish("Solare/Pompa 1/Modalita", mode, 0, true);
+            last_mode = mode;
+          }
+
+binary_sensor:
+  - platform: template
+    name: "Centralina Attiva"
+    lambda: |-
+      return id(centralina_attiva);
+    device_class: connectivity
+    state_topic: Solare/Centrale/Automatica/state
+    qos: 1
+    retain: true
+    # web_server:
+    #   sorting_group_id: ordine_dia
+
+  - platform: template
+    id: pompa_timer
+    name: "Pompa Timer Attivo"
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 1/Timer Temperatura Offline/state   
+    # web_server:
+    #   sorting_group_id: ordine_tempi    
+
+  - platform: template
+    name: "Uso Serbatoio"
+    id: use_solare_1
+    lambda: |-
+      static bool last_state_serbatoio_1 = false;  // true = Serbatoio 1 attivo, false = Serbatoio 2 attivo
+      static float last_temp_serbatoio_1 = 0.0;    // Memorizza la temperatura precedente di Serbatoio 1
+      static float last_temp_serbatoio_2 = 0.0;    // Memorizza la temperatura precedente di Serbatoio 2
+      // Soglie di temperatura per isteresi
+      const float temp_serbatoio_1_on_threshold = 70.0;  // Soglia per attivare il riscaldamento di Serbatoio 1
+      const float temp_serbatoio_1_off_threshold = 68.0; // Soglia per disattivare il riscaldamento di Serbatoio 1
+      const float temp_serbatoio_2_on_threshold = 55.0;  // Soglia per attivare il riscaldamento di Serbatoio 2
+      const float temp_serbatoio_2_off_threshold = 60.0; // Soglia per disattivare il riscaldamento di Serbatoio 2
+      // Leggi le temperature correnti
+      float current_temp_serbatoio_1 = id(temp_solare_1).state;
+      float current_temp_serbatoio_2 = id(temp_solare_2).state; 
+      // ESP_LOGD("custom", "Temperatura Serbatoio 1: %.1f°C, Temperatura Serbatoio 2: %.1f°C", current_temp_serbatoio_1, current_temp_serbatoio_2);
+      // Logica di commutazione tra serbatoi
+      if (!last_state_serbatoio_1) {  // Serbatoio 2 è attivo
+        if (current_temp_serbatoio_2 >= temp_serbatoio_2_on_threshold && abs(current_temp_serbatoio_2 - last_temp_serbatoio_2) < 1.0) {
+          // Se il serbatoio 2 ha raggiunto la temperatura minima di 55°C, passa a Serbatoio 1
+          last_state_serbatoio_1 = true;
+          id(valvola1).turn_on();  // Attiva il riscaldamento di Serbatoio 1
+          ESP_LOGW("custom", "Passato a riscaldamento Serbatoio 1.");
+        }
+      } else {  // Serbatoio 1 è attivo
+        if (current_temp_serbatoio_1 > temp_serbatoio_1_on_threshold) {
+          // Se la temperatura di Serbatoio 1 supera i 70°C, torna a Serbatoio 2
+          last_state_serbatoio_1 = false;
+          id(valvola1).turn_off();  // Ferma il riscaldamento di Serbatoio 1
+          ESP_LOGW("custom", "Passato a riscaldamento Serbatoio 2.");
+        }
+      }
+      // Aggiungi isteresi per evitare cambiamenti rapidi tra gli stati
+      // if (abs(current_temp_serbatoio_1 - last_temp_serbatoio_1) < 1.0 && abs(current_temp_serbatoio_2 - last_temp_serbatoio_2) < 1.0) {
+      //   ESP_LOGD("custom", "Temperatura stabile, nessuna commutazione.");
+      // }
+      // Salva le temperature per il prossimo ciclo
+      last_temp_serbatoio_1 = current_temp_serbatoio_1;
+      last_temp_serbatoio_2 = current_temp_serbatoio_2;
+      return last_state_serbatoio_1;  // Restituisce lo stato attuale del riscaldamento (serbatoio 1 o serbatoio 2)
+    on_press:
+      - switch.turn_on: valvola1  # Attiva riscaldamento per serbatoio 1
+    on_release:
+      - switch.turn_off: valvola1  # Disattiva riscaldamento per serbatoio 1
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Serbatoio
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Serbatoio/Uso serbatoio/state
+    # web_server:
+    #   sorting_group_id: ordine_temp
+
+  - platform: template
+    name: "Tasto Destra"
+    # web_server:
+    #   sorting_group_id: ordine_sensor    
+    lambda: |-
+      return (id(bottoni).state > 2.0 && id(bottoni).state < 2.3);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            if (!id(scorrimento_attivo)) {
+              id(scorrimento_attivo) = true;  // entra nel menu informativo
+            } else {
+              id(schermata_attiva) = (id(schermata_attiva) + 1) % 5;
+            }
+          } else if (id(menu_attivo) > 0) {
+            id(menu_attivo) = (id(menu_attivo) % 7) + 1;
+          }
+          id(last_activity_time) = millis();
+          id(display_attivo) = true;
+          id(splash_screen) = false;
+  
+  - platform: template
+    name: "Tasto Sinistra"
+    # web_server:
+    #   sorting_group_id: ordine_sensor    
+    lambda: |-
+      return (id(bottoni).state > 0.8 && id(bottoni).state < 1.3);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            if (!id(scorrimento_attivo)) {
+              id(scorrimento_attivo) = true;  // entra nel menu informativo
+            } else {
+              id(schermata_attiva) = (id(schermata_attiva) - 1 + 5) % 5;
+            }
+          } else if (id(menu_attivo) > 0) {
+            id(menu_attivo) = (id(menu_attivo) - 2 + 7) % 7 + 1;
+          }
+          id(last_activity_time) = millis();
+          id(display_attivo) = true;
+          id(splash_screen) = false;  
+
+  # Tasto Su: Incrementa il parametro
+  - platform: template
+    name: "Tasto Su"
+    # web_server:
+    #   sorting_group_id: ordine_sensor    
+    lambda: |-
+      return (id(bottoni).state > 2.5 && id(bottoni).state < 2.9);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            id(menu_attivo) = 1;
+            id(primo_ingresso_menu) = true;
+            id(scorrimento_attivo) = true;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+            id(last_activity_time) = millis();
+          } else {
+            id(last_activity_time) = millis();
+            if (id(primo_ingresso_menu)) {
+              id(primo_ingresso_menu) = false;
+            } else {
+              id(cambia_valore_menu)->execute(1);
+            }
+          }
+
+  - platform: template
+    name: "Tasto Giù"
+    # web_server:
+    #   sorting_group_id: ordine_sensor    
+    lambda: |-
+      return (id(bottoni).state > 0.4 && id(bottoni).state < 0.65);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            id(menu_attivo) = 1;
+            id(primo_ingresso_menu) = true;
+            id(scorrimento_attivo) = true;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+            id(last_activity_time) = millis();
+          } else {
+            id(last_activity_time) = millis();
+            if (id(primo_ingresso_menu)) {
+              id(primo_ingresso_menu) = false;
+            } else {
+              id(cambia_valore_menu)->execute(-1);
+            }
+          }
+
+  # Tasto OK: Conferma e chiudi il menù
+  - platform: template
+    name: "Tasto OK"
+    # web_server:
+    #   sorting_group_id: ordine_sensor    
+    lambda: |-
+      return (id(bottoni).state > 1.5 && id(bottoni).state < 1.75);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          id(menu_attivo) = 0;
+          id(schermata_attiva) = 0;
+          id(scorrimento_attivo) = false;
+          id(splash_screen) = false;
+          id(display_attivo) = true;
+          id(last_activity_time) = millis();     
+
+  - platform: template
+    name: "Pompa 1 Attiva (PWM > 0)"
+    lambda: |-
+      return id(pwm_attivo) && id(pwm_percentuale) > 0;
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Pompa 1
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Pompa 1/PWM attiva/state          
+    # web_server:
+    #   sorting_group_id: ordine_comandi
+
+  - platform: template
+    name: "Sonda Pannelli OK"
+    id: sonda_pannelli_ok
+    lambda: |-
+      return id(temp_pannelli_solari).state < 999.0;
+    device_class: connectivity
+    state_topic: Solare/Sonde/Pannelli/state
+    qos: 1
+    retain: true
+    # web_server:
+    #   sorting_group_id: ordine_dia
+
+  - platform: template
+    name: "Sonda Serbatoio 1 OK"
+    id: sonda_solare1_ok
+    lambda: |-
+      return id(temp_solare_1).state < 999.0;
+    device_class: connectivity
+    state_topic: Solare/Sonde/Solare 1/state
+    qos: 1
+    retain: true
+    # web_server:
+    #   sorting_group_id: ordine_dia
+
+  - platform: template
+    name: "Sonda Serbatoio 2 OK"
+    id: sonda_solare2_ok
+    lambda: |-
+      return id(temp_solare_2).state < 999.0;
+    device_class: connectivity
+    state_topic: Solare/Sonde/Solare 2/state
+    qos: 1
+    retain: true
+    # web_server:
+    #   sorting_group_id: ordine_dia
+
+  - platform: template
+    name: "Sonda ACS OK"
+    id: sonda_acs_ok
+    lambda: |-
+      return id(temp_acs).state < 999.0;
+    device_class: connectivity
+    state_topic: Solare/Sonde/ACS/state
+    qos: 1
+    retain: true
+    # web_server:
+    #   sorting_group_id: ordine_dia
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(centrale_scroll_index) += 1;
+          if (id(centrale_scroll_index) > 100) {
+            id(centrale_scroll_index) = 0;
+          }
+
+  - interval: 1min
+    then:
+      - lambda: |-
+          // ⚡️ Calcolo consumo Pompa 1 (PWM)
+          if (id(pwm_attivo) && id(pwm_percentuale) > 0) {
+            const float P_nom = 80.0;
+            float pwm = id(pwm_percentuale) / 100.0;
+            float energia = (pwm * P_nom) * (1.0 / 60.0) / 1000.0;  // 1 min = 1/60 h
+            id(pompa1_consumo_kwh) += energia;
+            id(pwm_potenza_attuale) = pwm * P_nom;
+          }
+
+  - interval: 5min
+    then:
+      - lambda: |-
+          // 🔆 Spegnimento display dopo inattività
+          if (!id(splash_screen)) {
+            id(display_attivo) = false;
+            // Se non stiamo scorrendo schermate, spegni dopo inattività
+            if (!id(scorrimento_attivo)) {
+              if (millis() - id(last_activity_time) > 120000) {  // 2 minuti di inattività
+                id(display_attivo) = false;
+              }
+            }
+          }
+      - lambda: |-
+          // ⚙️ Calcolo consumo Pompa 2 (velocità fissa)
+          if (id(pompa2).state) {
+            float potenza = 0.0;
+            int livello = int(id(velocita_pompa2));
+            if (livello == 1) potenza = 45.0;
+            else if (livello == 2) potenza = 65.0;
+            else if (livello == 3) potenza = 90.0;
+
+            float energia = (potenza * (5.0 / 60.0)) / 1000.0;  // in kWh
+            id(pompa2_consumo_kwh) += energia;
+          }
+      - lambda: |-   # Limita l'attivazione della pompa a 5 minuti
+          if (!id(centralina_attiva)) {
+            static bool stato_precedente = true;
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != stato_precedente) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              stato_precedente = stato_attuale;
+            }
+            return;
+          }
+          if (id(pompa_timer).state) {
+            ESP_LOGW("custom", "5 minuti scaduti, spegnimento della pompa.");
+            id(pompa1).turn_off();  // Spegne la pompa dopo 5 minuti
+            id(pompa_timer).publish_state(false);  // Disattiva il flag
+          }
+
+  # Splash screen deve rimanere per 2 secondi e poi sparire.
+  - interval: 10s
+    then:
+      - lambda: |-
+          static bool primo_passaggio = true;
+          if (primo_passaggio) {
+            primo_passaggio = false;
+            ESP_LOGI("SPLASH", "Splash ancora attivo, prima iterazione ignorata.");
+          } else {
+            ESP_LOGI("SPLASH", "Disattivo splash screen.");
+            id(splash_screen) = false;
+          }
+
+  - interval: 5s
+    then:
+      - lambda: |-
+          float temp = id(temp_pannelli_solari).state;
+          if (temp > 80.0) {
+            if (!id(era_sopra)) {
+              id(sopra_soglia_start) = millis();
+              id(era_sopra) = true;
+            }
+          } else {
+            if (id(era_sopra)) {
+              unsigned long durata = (millis() - id(sopra_soglia_start)) / 1000;
+              id(tempo_totale) += durata;
+              id(tempo_giorno) += durata;
+              id(tempo_settimana) += durata;
+              id(tempo_mese) += durata;
+              id(era_sopra) = false;
+            }
+          }
+
+  - interval: 3s
+    then:
+      - lambda: |-
+          if (!id(centralina_attiva)) {
+            id(pwm_attivo) = false;
+            id(pompa1).turn_off();
+            return;
+          }
+
+          float t1 = id(temp_pannelli_solari).state;
+          float dt = id(delta_t).state;
+          float delta_max = id(delta_t_setpoint);
+          float delta_min = id(setpoint_delta_min).state;
+          float target_pwm = 0.0;
+          bool is_antigelo = false;
+
+          // Protezioni
+          if (t1 > id(temperatura_massima)) {
+            target_pwm = 1.0;
+            id(pwm_stato_logico) = "SURRISCALDAMENTO";
+            id(autorizzato_avvio_pwm) = false;
+            id(richiesta_softstart) = true;
+          } else if (t1 < id(temperatura_antigelo)) {
+            target_pwm = 0.3;
+            is_antigelo = true;
+            id(pwm_stato_logico) = "ANTIGELO";
+            id(autorizzato_avvio_pwm) = false;
+          } else {
+            if (!id(autorizzato_avvio_pwm)) {
+              if (dt >= delta_max) {
+                id(autorizzato_avvio_pwm) = true;
+              } else {
+                id(pwm_stato_logico) = "SPENTO";
+                id(pompa1).turn_off();
+                return;
+              }
+            }
+
+            if (id(autorizzato_avvio_pwm)) {
+              if (dt <= delta_min - 0.3) {
+                id(pwm_stato_logico) = "SPENTO";
+                id(pompa1).turn_off();
+                id(autorizzato_avvio_pwm) = false;
+                id(pwm_livello_attivo) = 0;
+                id(richiesta_softstart) = true;
+                return;
+              }
+
+              float p = (dt - delta_min) / (delta_max - delta_min);  // Normalizzato
+
+              // 🔁 Logica PWM con isteresi per evitare rimbalzi
+              switch (id(pwm_livello_attivo)) {
+                case 0:
+                  if (p >= 0.0 && p < 0.36) {
+                    target_pwm = 0.3; id(pwm_livello_attivo) = 1;
+                  } else if (p >= 0.42 && p < 0.56) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else if (p >= 0.62 && p < 0.76) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else if (p >= 0.82) {
+                    target_pwm = 1.0; id(pwm_livello_attivo) = 4;
+                  }
+                  break;
+                case 1:
+                  if (p < 0.34) {
+                    target_pwm = 0.3;
+                  } else if (p >= 0.42) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else {
+                    target_pwm = 0.3;
+                  }
+                  break;
+                case 2:
+                  if (p < 0.36) {
+                    target_pwm = 0.3; id(pwm_livello_attivo) = 1;
+                  } else if (p >= 0.58) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else {
+                    target_pwm = 0.5;
+                  }
+                  break;
+                case 3:
+                  if (p < 0.56) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else if (p >= 0.78) {
+                    target_pwm = 1.0; id(pwm_livello_attivo) = 4;
+                  } else {
+                    target_pwm = 0.75;
+                  }
+                  break;
+                case 4:
+                  if (p < 0.76) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else {
+                    target_pwm = 1.0;
+                  }
+                  break;
+              }
+
+              id(pwm_stato_logico) = "AUTO";
+            }
+          }
+
+          if (is_antigelo) {
+            id(pwm_attivo) = true;
+            id(pwm_percentuale) = int(target_pwm * 100);
+            id(richiesta_softstart) = false;
+            return;
+          }
+
+          if (id(richiesta_softstart)) {
+            id(pwm_soft_start_active) = true;
+            id(pwm_soft_current) = 30;
+            id(pwm_soft_target) = int(target_pwm * 100);
+            id(pwm_percentuale) = id(pwm_soft_current);
+            id(pwm_attivo) = true;
+            id(richiesta_softstart) = false;
+            id(pwm_stato_logico) = "SOFTSTART";
+          } else {
+            id(pwm_attivo) = true;
+            id(pwm_percentuale) = int(target_pwm * 100);
+          }
+
+  - interval: 1s
+    then:
+    - lambda: |-
+        if (id(pwm_soft_start_active)) {
+          if (id(pwm_soft_current) < id(pwm_soft_target)) {
+            id(pwm_soft_current) += 10;
+            if (id(pwm_soft_current) > id(pwm_soft_target)) {
+              id(pwm_soft_current) = id(pwm_soft_target);
+            }
+          } else if (id(pwm_soft_current) > id(pwm_soft_target)) {
+            id(pwm_soft_current) -= 10;
+            if (id(pwm_soft_current) < id(pwm_soft_target)) {
+              id(pwm_soft_current) = id(pwm_soft_target);
+            }
+          }
+          id(pwm_percentuale) = id(pwm_soft_current);
+          id(pwm_attivo) = (id(pwm_percentuale) > 0);
+          if (id(pwm_soft_current) == id(pwm_soft_target)) {
+            id(pwm_soft_start_active) = false;
+          }
+          // Aggiorna MQTT solo durante il soft start
+          id(aggiorna_stato_pompa1_mqtt).execute();
+        }
+
+  # Lambda per le temperature
+  - interval: 1s
+    then:
+      - lambda: |-
+          std::string data = "";
+          uint8_t byte = 0;
+
+          while (id(uart_bus).available()) {
+            if (id(uart_bus).read_byte(&byte)) {
+              if (byte == '\n') {
+                break;
+              }
+              data += (char)byte;
+            }
+          }
+
+          // ESP_LOGD("custom", "Dati letti dalla UART: %s", data.c_str());
+
+          if (data.length() > 2 && data[1] == 'x') {
+            char type = data[0];
+            int temp_value = atoi(data.substr(2).c_str());
+            float temperature = temp_value / 10.0;
+
+            if (temperature > 1000.0) {
+              ESP_LOGW("custom", "ERRORE: Sonda scollegata o valore non valido! Ignorato.");
+              return;
+            }
+
+            ESP_LOGD("custom", "Temperatura calcolata: %.1f°C", temperature);
+
+            if (type == '0') {
+              id(temp_pannelli_solari).publish_state(temperature);
+              ESP_LOGD("custom", "Temperatura Pannelli: %.1f°C", temperature);
+            } else if (type == '1') {
+              id(temp_solare_1).publish_state(temperature);
+              ESP_LOGD("custom", "Temperatura Solare 1: %.1f°C", temperature);
+            } else if (type == '2') {
+              id(temp_solare_2).publish_state(temperature);
+              ESP_LOGD("custom", "Temperatura Solare 2: %.1f°C", temperature);
+            } else if (type == '3') {
+              id(temp_acs).publish_state(temperature);
+              ESP_LOGD("custom", "Temperatura ACS: %.1f°C", temperature);
+            }
+          }
+
+  # CONTROLLO POMPA SE I PANNELLI NON VANNO
+  - interval: 30min  # Ogni 30 minuti
+    then:
+      - lambda: |-
+          if (!id(centralina_attiva)) {
+            static bool stato_precedente = true;
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != stato_precedente) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              stato_precedente = stato_attuale;
+            }
+            return;
+          }
+          // Ottieni l'ora corrente dal sistema SNTP
+          int current_hour = id(sntp_time).now().hour;  // Ottieni l'ora corrente
+
+          // Controlla se l'orario è tra le 12:00 e le 16:00
+          if (current_hour >= 12 && current_hour <= 16) {
+            // Leggi la temperatura del pannello solare
+            float temp_pannelli = id(temp_pannelli_solari).state;
+
+            // Se la temperatura è troppo alta, attiva la pompa
+            if (temp_pannelli > 1000.0) {
+              ESP_LOGW("custom", "Temperatura non misurata! Attivazione pompa per raffreddamento.");
+              id(pompa1).turn_on();   // Accende la pompa
+              // Avvia un nuovo intervallo per monitorare la temperatura durante il raffreddamento
+              id(pompa_timer).publish_state(true);  // Attiva un flag per monitorare il tempo
+            }
+          }
+
+  - interval: 1s  # Controllo ogni secondo per vedere se la temperatura cambia
+    then:
+      - lambda: |-
+          if (!id(centralina_attiva)) {
+            static bool stato_precedente = true;
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != stato_precedente) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              stato_precedente = stato_attuale;
+            }
+            return;
+          }
+          // Controlla se il timer della pompa è attivo
+          if (id(pompa_timer).state) {
+            // Leggi la temperatura del pannello solare
+            float temp_pannelli = id(temp_pannelli_solari).state;
+
+            // Se la temperatura è scesa sotto la soglia, spegni la pompa prima del tempo
+            if (temp_pannelli <= 1000.0) {
+              ESP_LOGW("custom", "Temperatura tornata nella norma, spegnimento della pompa.");
+              id(pompa1).turn_off();  // Spegne la pompa
+              id(pompa_timer).publish_state(false);  // Disattiva il flag
+            }
+          }
+
+  - interval: 1s
+    then:
+      - lambda: |-
+          const uint32_t timeout = 15000;  // 15 secondi
+          if ((id(menu_attivo) > 0 || id(scorrimento_attivo)) && (millis() - id(last_activity_time) > timeout)) {
+            id(menu_attivo) = 0;
+            id(scorrimento_attivo) = false;
+            id(schermata_attiva) = 0;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+          }
+
+# Text sensors with general information.
+text_sensor:
+  # Expose ESPHome version as sensor.
+  - platform: version
+    name: $devicename Version
+
+  # Expose WiFi information as sensors
+  - platform: ethernet_info
+    ip_address:
+      name: $devicename IP Address
+      id: ip_address
+    dns_address:
+      name: $devicename DNS Address
+      id: dns_address
+    mac_address:
+      name: $devicename MAC Address
+      id: mac_address    
+
+  - platform: template
+    name: "Consumo Pompa 1"
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f kWh", id(pompa1_consumo_kwh));
+      return {buf};
+    update_interval: 300s  # ogni 5 minuti
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 1/Consumo kWh
+            payload: !lambda 'return x;'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_tempi
+
+  - platform: template
+    name: "Potenza Attuale Pompa 1"
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1f W", id(pwm_potenza_attuale));
+      return {buf};
+    update_interval: 300s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 1/Potenza Attuale
+            payload: !lambda 'return x;'
+            retain: true
+
+  - platform: template
+    name: "Consumo Pompa 2"
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f kWh", id(pompa2_consumo_kwh));
+      return {buf};
+    update_interval: 300s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 2/Consumo kWh
+            payload: !lambda 'return x;'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_tempi
+
+  - platform: template
+    name: "Velocità Pompa 2"
+    lambda: |-
+      int valore = int(id(velocita_pompa2));
+      if (valore < 1 || valore > 3) {
+        return {"Valore errato"};
+      }
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%d", valore);
+      return {buf};
+    update_interval: 30s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Parametri/Velocita Pompa2
+            payload: !lambda 'return x;'
+            retain: true
+
+  - platform: template
+    name: "Trend Temperatura Pannelli"
+    id: temp_trend_pannelli_sensor
+    lambda: |-
+      int t = (int)id(temp_trend_pannelli).state;
+      if (t == 1) {
+        return {"🔺 Aumento"};
+      } else if (t == -1) {
+        return {"🔻 Calo"};
+      } else {
+        return {"➖ Stabile"};
+      }
+    qos: 1
+    retain: true
+    availability:
+      topic: Solare/Temperature
+      payload_available: online
+      payload_not_available: offline
+    state_topic: Solare/Temperature/Trend Temperatura Pannelli/state
+    # web_server:
+    #   sorting_group_id: ordine_temp    
+
+  - platform: template
+    name: "Pompa 1 Tempo Totale"
+    lambda: |-
+      int sec = id(pompa1_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 1/Tempo Totale
+            payload: !lambda 'return x;'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_comandi            
+
+  - platform: template
+    name: "Pompa 1 Ultima Durata"
+    lambda: |-
+      int sec = id(pompa1_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 1/Ultima Durata
+            payload: !lambda 'return x;'
+            retain: true  
+    # web_server:
+    #   sorting_group_id: ordine_tempi            
+
+  # Elettrovalvola 1
+  - platform: template
+    name: "EV 1 Tempo Totale"
+    lambda: |-
+      int sec = id(ev1_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 1/Tempo Totale
+            payload: !lambda 'return x;'
+            retain: true    
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  - platform: template
+    name: "EV 1 Ultima Durata"
+    lambda: |-
+      int sec = id(ev1_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 1/Ultima Durata
+            payload: !lambda 'return x;'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  # Pompa 2
+  - platform: template
+    name: "Pompa 2 Tempo Totale"
+    lambda: |-
+      int sec = id(pompa2_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 2/Tempo Totale
+            payload: !lambda 'return x;'
+            retain: true   
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  - platform: template
+    name: "Pompa 2 Ultima Durata"
+    lambda: |-
+      int sec = id(pompa2_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 2/Ultima Durata
+            payload: !lambda 'return x;'
+            retain: true  
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  # Elettrovalvola 2
+  - platform: template
+    name: "EV 2 Tempo Totale"
+    lambda: |-
+      int sec = id(ev2_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 2/Tempo Totale
+            payload: !lambda 'return x;'
+            retain: true     
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  - platform: template
+    name: "EV 2 Ultima Durata"
+    lambda: |-
+      int sec = id(ev2_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Elettrovalvola 2/Ultima Durata
+            payload: !lambda 'return x;'
+            retain: true   
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  - platform: template
+    name: "Serbatoio In Uso"
+    lambda: |-
+      if (id(use_solare_1).state) {
+        return std::string("Serbatoio 1 in uso");
+      } else {
+        return std::string("Serbatoio 2 in uso");
+      } 
+    update_interval: 10s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Serbatoio/In Uso
+            payload: !lambda 'return x;'
+            retain: true
+    # web_server:
+    #   sorting_group_id: ordine_temp
+
+  - platform: template
+    name: "Tempo totale pannelli > 80°C"
+    lambda: |-
+      int sec = id(tempo_totale) % 60;
+      int min = id(tempo_totale) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - lambda: |-
+            static std::string last_payload = "";
+            std::string msg = x;
+            if (msg != last_payload) {
+              mqtt::global_mqtt_client->publish("Solare/Pannelli/Tempo Totale", msg, 0, true);
+              last_payload = msg;
+            }
+    # web_server:
+    #   sorting_group_id: ordine_tempi       
+
+  - platform: template
+    name: "Tempo oggi pannelli > 80°C"
+    # web_server:
+    #   sorting_group_id: ordine_tempi     
+    lambda: |-
+      int sec = id(tempo_giorno) % 60;
+      int min = id(tempo_giorno) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - lambda: |-
+            static std::string last_payload = "";
+            std::string msg = x;
+            if (msg != last_payload) {
+              mqtt::global_mqtt_client->publish("Solare/Pannelli/Tempo Oggi", msg, 0, true);
+              last_payload = msg;
+            }    
+      
+  - platform: template
+    name: "Tempo settimana pannelli > 80°C"
+    # web_server:
+    #   sorting_group_id: ordine_tempi    
+    lambda: |-
+      int sec = id(tempo_settimana) % 60;
+      int min = id(tempo_settimana) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - lambda: |-
+            static std::string last_payload = "";
+            std::string msg = x;
+            if (msg != last_payload) {
+              mqtt::global_mqtt_client->publish("Solare/Pannelli/Tempo Settimana", msg, 0, true);
+              last_payload = msg;
+            }      
+
+  - platform: template
+    name: "Tempo mese pannelli > 80°C"
+    # web_server:
+    #   sorting_group_id: ordine_tempi     
+    lambda: |-
+      int sec = id(tempo_mese) % 60;
+      int min = id(tempo_mese) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer}; 
+    on_value:
+      then:
+        - lambda: |-
+            static std::string last_payload = "";
+            std::string msg = x;
+            if (msg != last_payload) {
+              mqtt::global_mqtt_client->publish("Solare/Pannelli/Tempo Mese", msg, 0, true);
+              last_payload = msg;
+            }  
+
+  - platform: template
+    name: "Stato PWM Pompa 1"
+    # web_server:
+    #   sorting_group_id: ordine_tempi     
+    lambda: |-
+      if (!id(pwm_attivo)) {
+        return std::string("Disattivato");
+      }
+      return std::to_string(id(pwm_percentuale));
+    update_interval: 5s      
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: Solare/Pompa 1/PWM stato
+            payload: !lambda 'return x;'
+            retain: true    
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Rome
+    servers:
+     - pool.ntp.org
+     - time.google.com
+    update_interval: 1s
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        days_of_week: MON
+        then:
+          - lambda: |-
+              id(tempo_settimana) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        days_of_month: 1
+        then:
+          - lambda: |-
+              id(tempo_mese) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              id(tempo_giorno) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 4  # orario di attivazione (puoi cambiarlo)
+        then:
+          - lambda: |-
+              if (id(pompa1_total_time_sec) < 60) {  // se ha funzionato meno di 1 minuto oggi
+                ESP_LOGI("SAFE PUMP", "Attivazione preventiva pompa 1 per antiblocco");
+                id(pompa1).turn_on();
+                id(richiesta_softstart) = false;
+                id(pwm_percentuale) = 30;
+                delay(5000);  // 5 secondi
+                id(pompa1).turn_off();
+              }              
