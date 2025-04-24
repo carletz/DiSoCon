@@ -33,9 +33,9 @@ The controller is designed to operate autonomously based on temperature differen
 
 All hardware schematics are provided in PDF format:
 
-- [`SCH_TEMPERATURE V1.1_2025-04-24.pdf`](SCH_TEMPERATURE%20V1.1_2025-04-24.pdf)
-- [`SCH_CENTRALINA CONTROLLO V3.2_2025-04-24.pdf`](SCH_CENTRALINA%20CONTROLLO%20V3.2_2025-04-24.pdf)
-- [`SCH_CENTRALINA POTENZA V2.0_2025-04-24.pdf`](SCH_CENTRALINA%20POTENZA%20V2.0_2025-04-24.pdf)
+- SCH_TEMPERATURE V1.1_2025-04-24.pdf
+- SCH_CENTRALINA CONTROLLO V3.2_2025-04-24.pdf
+- SCH_CENTRALINA POTENZA V2.0_2025-04-24.pdf
 
 ---
 
