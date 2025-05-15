@@ -6,8 +6,8 @@ esphome:
 
 esp32:
   board: esp32-s3-devkitc-1
-  framework:
-    type: esp-idf
+  # framework:
+  #   type: esp-idf
 
 ota:
   - platform: esphome
@@ -22,7 +22,7 @@ ethernet:
   interrupt_pin: GPIO2
   reset_pin: GPIO1
   manual_ip:
-    static_ip: 192.168.1.xxx    # Change according to your favorite address
+    static_ip: 192.168.1.43
     gateway: 192.168.1.1
     subnet: 255.255.255.0
     dns1: 8.8.8.8       # DNS di Google
@@ -32,8 +32,8 @@ web_server:
   port: 80
   version: 2
   auth:
-    username: user
-    password: password
+    username: carletz
+    password: Metalscga80$
   # sorting_groups:
   #   - id: ordine_temp
   #     name: "Temperature"
@@ -58,22 +58,22 @@ web_server:
   #     sorting_weight: 90
 
 logger:
-  level: INFO  # livello generale: warning e errori
-  hardware_uart: USB_SERIAL_JTAG  # usa porta USB debug dell'ESP32-S3
-  logs:
-    centrale: INFO       # log utile per lo stato della centrale
-    custom: WARN         # log per pompe/valvole/script → warning ok
-    pompa1: WARN         # solo se accesa/spenta
-    SPLASH: NONE         # disattiva log iniziali irrilevanti
-    script: WARN         # blocca log da esecuzioni continue
-    component: ERROR     # componenti generici
-    sensor: ERROR        # evita "state updated" ogni secondo
-    display: ERROR       # (se presente) evita log LCD inutili
-    mqtt: INFO         # <-- VEDI attività MQTT (connessioni/pubblicazioni)
-    mqtt.component: INFO  # <-- (opzionale) per log MQTT legati ai componenti    
+  # level: INFO  # livello generale: warning e errori
+  # hardware_uart: USB_SERIAL_JTAG  # usa porta USB debug dell'ESP32-S3
+  # logs:
+  #   centrale: INFO       # log utile per lo stato della centrale
+  #   custom: WARN         # log per pompe/valvole/script → warning ok
+  #   pompa1: WARN         # solo se accesa/spenta
+  #   SPLASH: NONE         # disattiva log iniziali irrilevanti
+  #   script: WARN         # blocca log da esecuzioni continue
+  #   component: ERROR     # componenti generici
+  #   sensor: ERROR        # evita "state updated" ogni secondo
+  #   display: ERROR       # (se presente) evita log LCD inutili
+  #   mqtt: INFO         # <-- VEDI attività MQTT (connessioni/pubblicazioni)
+  #   mqtt.component: INFO  # <-- (opzionale) per log MQTT legati ai componenti    
 
 mqtt:
-  broker: 192.168.1.xxx     # change according to your mqtt server
+  broker: 192.168.1.42
   port: 1883
   on_json_message:
     - topic: "Solare/Pompa 1/Controllo"
@@ -83,17 +83,17 @@ mqtt:
               bool stato = x["stato"];
               if (stato) {
                 id(richiesta_softstart) = true;
-                id(pompa1).turn_on();
+                id(pompa1_light).turn_on().set_brightness(50);
               } else {
-                id(pompa1).turn_off();
+                id(pompa1_light).turn_on().set_brightness(0);
               }
             }
 
             if (x.containsKey("percentuale")) {
               int nuova_percentuale = int(x["percentuale"]);
-              if (nuova_percentuale != id(pwm_percentuale)) {
+              if (nuova_percentuale != id(pwm_percentuale).state) {
                 id(pwm_soft_start_active) = true;
-                id(pwm_soft_current) = id(pwm_percentuale);
+                id(pwm_soft_current) = id(pwm_percentuale).state;
                 id(pwm_soft_target) = nuova_percentuale;
               }
             }
@@ -140,8 +140,8 @@ mqtt:
               ESP_LOGI("mqtt", "Delta T Minimo aggiornato da MQTT: %.1f", val);
             }            
 
-external_components:
-  - source: "custom_components/zerocross_pwm"
+# external_components:
+#   - source: "./custom_components/zerocross_pwm"
 
 globals:
   - id: primo_ingresso_menu
@@ -311,10 +311,10 @@ globals:
     restore_value: no
     initial_value: '0'    
 
-  - id: pwm_percentuale
-    type: int
-    restore_value: no
-    initial_value: '0'  # da 0 a 100
+  # - id: pwm_percentuale
+  #   type: int
+  #   restore_value: no
+  #   initial_value: '0'  # da 0 a 100
   - id: pwm_attivo
     type: bool
     restore_value: no
@@ -521,11 +521,11 @@ display:
           it.print(0, 0, "- GESTIONE  SOLARE -");
           it.printf(0, 1, "Pompa: %s", stato_pompa1);
           it.printf(0, 2, "PWM: [");
-          int pwm_len = id(pwm_percentuale) / 10;  // da 0 a 10 blocchi
+          int pwm_len = id(pwm_percentuale).state / 10;  // da 0 a 10 blocchi
           for (int i = 0; i < 10; i++) {
             it.print(i + 6, 2, i < pwm_len ? "\xFF" : " ");
           }
-          it.printf(17, 2, "] %3d%%", id(pwm_percentuale));
+          it.printf(17, 2, "] %3d%%", id(pwm_percentuale).state);
           it.printf(0, 3, "%-7s V:%s", id(pwm_stato_logico).c_str(), stato_valvola1.c_str());
           //it.print(0, 3, "Valvola: " + stato_valvola1);
         } else if (id(schermata_attiva) == 3) {  
@@ -667,6 +667,26 @@ number:
     # web_server:
     #   sorting_group_id: ordine_comandi
 
+  - platform: template
+    name: "PWM Pompa 1 (%)"
+    id: pwm_percentuale
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    restore_value: true
+    initial_value: 0
+    optimistic: true
+    on_value:
+      then:
+        - output.set_level:
+            id: pompa1dimmer
+            level: !lambda 'return x / 100.0;'
+        - mqtt.publish:
+            topic: Solare/Pompa 1/PWM
+            payload: !lambda 'return to_string((int)x);'
+            retain: true
+            
 # Sensore personalizzato per leggere i dati UART
 sensor:
   - platform: ads1115
@@ -901,6 +921,23 @@ sensor:
     # web_server:
     #   sorting_group_id: ordine_temp    
 
+output:
+  - platform: ac_dimmer
+    id: pompa1dimmer
+    gate_pin: GPIO14
+    zero_cross_pin:
+      number: GPIO36
+      mode:
+        input: true
+      inverted: yes
+
+light:
+  - platform: monochromatic
+    output: pompa1dimmer
+    id: pompa1_light
+    name: "Pompa 1 PWM"
+    restore_mode: ALWAYS_OFF
+
 switch:
   - platform: template
     name: "Centralina Automatica"
@@ -946,27 +983,18 @@ switch:
     name: "Pompa 1 PWM"
     id: pompa1
     lambda: |-
-      return id(pwm_attivo) && id(pwm_percentuale) > 0;
+      return id(pwm_attivo);
     turn_on_action:
+      - light.turn_on:
+          id: pompa1_light
+          brightness: !lambda "return id(pwm_percentuale).state;"
       - lambda: |-
           id(pwm_attivo) = true;
-          if (id(pwm_percentuale) == 0) {
-            id(pwm_percentuale) = 100;
-          }
-          if (id(pwm_percentuale) > 0 && id(pompa1_start_time) == 0) {
-            id(pompa1_start_time) = millis();
-          }
       - script.execute: aggiorna_stato_pompa1_mqtt
     turn_off_action:
+      - light.turn_off: pompa1_light
       - lambda: |-
           id(pwm_attivo) = false;
-          id(pwm_percentuale) = 0;
-          if (id(pompa1_start_time) > 0) {
-            unsigned long durata = (millis() - id(pompa1_start_time)) / 1000;
-            id(pompa1_last_duration_sec) = durata;
-            id(pompa1_total_time_sec) += durata;
-            id(pompa1_start_time) = 0;
-          }
       - script.execute: aggiorna_stato_pompa1_mqtt
     restore_mode: RESTORE_DEFAULT_OFF
     # web_server:
@@ -1025,9 +1053,8 @@ switch:
       # One of INPUT or OUTPUT
       mode:
         output: true
-      inverted: false
+      inverted: true
     restore_mode: ALWAYS_OFF  # RESTORE_DEFAULT_ON or RESTORE_DEFAULT_OFF or ALWAYS_OFF/ALWAYS_ON
-    #interlock: &interlock_group [valvola2, valvola3, valvola4, valvola5, valvola6]
     on_turn_on:
       then:
         - lambda: |-
@@ -1068,7 +1095,6 @@ switch:
         output: true
       inverted: true
     restore_mode: ALWAYS_OFF  # RESTORE_DEFAULT_ON or RESTORE_DEFAULT_OFF or ALWAYS_OFF/ALWAYS_ON
-    #interlock: &interlock_group [valvola2, valvola3, valvola4, valvola5, valvola6]
     on_turn_on:
       then:
         - lambda: |-
@@ -1103,22 +1129,22 @@ switch:
     # web_server:
     #   sorting_group_id: ordine_comandi    
 
-  - platform: gpio
-    name: "Pompa 1 Manuale Diretta (GPIO14)"
-    id: pompa1_gpio_direct
-    pin: GPIO14
-    restore_mode: ALWAYS_OFF
-    qos: 1
-    retain: true
-    availability:
-      topic: Solare/Pompa 1
-      payload_available: online
-      payload_not_available: offline
-    state_topic: Solare/Pompa 1/GPIO Manuale/state
-    command_topic: Solare/Pompa 1/GPIO Manuale/command
-    command_retain: true
-    # web_server:
-    #   sorting_group_id: ordine_comandi    
+  # - platform: gpio
+  #   name: "Pompa 1 Manuale Diretta (GPIO14)"
+  #   id: pompa1_gpio_direct
+  #   pin: GPIO14
+  #   restore_mode: ALWAYS_OFF
+  #   qos: 1
+  #   retain: true
+  #   availability:
+  #     topic: Solare/Pompa 1
+  #     payload_available: online
+  #     payload_not_available: offline
+  #   state_topic: Solare/Pompa 1/GPIO Manuale/state
+  #   command_topic: Solare/Pompa 1/GPIO Manuale/command
+  #   command_retain: true
+  #   # web_server:
+  #   #   sorting_group_id: ordine_comandi    
 
   - platform: template
     name: "Modalità Manuale Pompa 1"
@@ -1130,19 +1156,19 @@ switch:
           id(pompa1_manual_mode) = true;
           id(pwm_stato_logico) = "MANUALE";
           ESP_LOGI("pompa1", "Modalità manuale attiva");
-      - switch.turn_off: pompa1  # assicurati che si parta da spento
       - mqtt.publish:
           topic: Solare/Pompa 1/Pompa 1 modalità manuale/state
           payload: "ON"
-          retain: true          
+          retain: true
     on_turn_off:
       - lambda: |-
           id(pompa1_manual_mode) = false;
+          id(pwm_stato_logico) = "AUTO";
           ESP_LOGI("pompa1", "Modalità automatica attiva");
       - mqtt.publish:
           topic: Solare/Pompa 1/Pompa 1 modalità manuale/state
           payload: "OFF"
-          retain: true          
+          retain: true         
     qos: 1
     retain: true
     availability:
@@ -1178,16 +1204,14 @@ switch:
       - lambda: |-
           if (id(pompa1_manual_mode)) {
             id(pwm_attivo) = true;
-            id(pwm_percentuale) = 100;
-            ESP_LOGI("pompa1", "Pompa 1 accesa in manuale");
+            id(pwm_percentuale).publish_state(100);
           }
     on_turn_off:
       - lambda: |-
           if (id(pompa1_manual_mode)) {
             id(pwm_attivo) = false;
-            id(pwm_percentuale) = 0;
-            ESP_LOGI("pompa1", "Pompa 1 spenta in manuale");
-          }    
+            id(pwm_percentuale).publish_state(0);
+          }   
     qos: 1
     retain: true
     availability:
@@ -1323,8 +1347,8 @@ script:
           static std::string last_state = "";
           static std::string last_mode = "";
 
-          std::string pwm = std::to_string(id(pwm_percentuale));
-          std::string stato = id(pompa1).state ? "ON" : "OFF";
+          std::string pwm = std::to_string(id(pwm_percentuale).state);
+          std::string stato = (id(pwm_attivo) && id(pwm_percentuale).state > 0) ? "ON" : "OFF";
           std::string mode = id(pompa1_manual_mode) ? "MANUALE" : "AUTO";
 
           if (pwm != last_pwm) {
@@ -1544,7 +1568,7 @@ binary_sensor:
   - platform: template
     name: "Pompa 1 Attiva (PWM > 0)"
     lambda: |-
-      return id(pwm_attivo) && id(pwm_percentuale) > 0;
+      return id(pwm_attivo) && id(pwm_percentuale).state > 0;
     qos: 1
     retain: true
     availability:
@@ -1616,9 +1640,9 @@ interval:
     then:
       - lambda: |-
           // ⚡️ Calcolo consumo Pompa 1 (PWM)
-          if (id(pwm_attivo) && id(pwm_percentuale) > 0) {
+          if (id(pwm_attivo) && id(pwm_percentuale).state > 0) {
             const float P_nom = 80.0;
-            float pwm = id(pwm_percentuale) / 100.0;
+            float pwm =(id(pwm_percentuale).state) / 100.0;
             float energia = (pwm * P_nom) * (1.0 / 60.0) / 1000.0;  // 1 min = 1/60 h
             id(pompa1_consumo_kwh) += energia;
             id(pwm_potenza_attuale) = pwm * P_nom;
@@ -1803,7 +1827,7 @@ interval:
 
           if (is_antigelo) {
             id(pwm_attivo) = true;
-            id(pwm_percentuale) = int(target_pwm * 100);
+            id(pwm_percentuale).publish_state(int(target_pwm * 100));
             id(richiesta_softstart) = false;
             return;
           }
@@ -1812,38 +1836,37 @@ interval:
             id(pwm_soft_start_active) = true;
             id(pwm_soft_current) = 30;
             id(pwm_soft_target) = int(target_pwm * 100);
-            id(pwm_percentuale) = id(pwm_soft_current);
+            id(pwm_percentuale).publish_state(id(pwm_soft_current));
             id(pwm_attivo) = true;
             id(richiesta_softstart) = false;
             id(pwm_stato_logico) = "SOFTSTART";
           } else {
             id(pwm_attivo) = true;
-            id(pwm_percentuale) = int(target_pwm * 100);
+            id(pwm_percentuale).publish_state(int(target_pwm * 100));
           }
 
   - interval: 1s
     then:
-    - lambda: |-
-        if (id(pwm_soft_start_active)) {
-          if (id(pwm_soft_current) < id(pwm_soft_target)) {
-            id(pwm_soft_current) += 10;
-            if (id(pwm_soft_current) > id(pwm_soft_target)) {
-              id(pwm_soft_current) = id(pwm_soft_target);
-            }
-          } else if (id(pwm_soft_current) > id(pwm_soft_target)) {
-            id(pwm_soft_current) -= 10;
+      - lambda: |-
+          if (id(pwm_soft_start_active)) {
             if (id(pwm_soft_current) < id(pwm_soft_target)) {
-              id(pwm_soft_current) = id(pwm_soft_target);
+              id(pwm_soft_current) += 10;
+              if (id(pwm_soft_current) > id(pwm_soft_target)) {
+                id(pwm_soft_current) = id(pwm_soft_target);
+              }
+            } else if (id(pwm_soft_current) > id(pwm_soft_target)) {
+              id(pwm_soft_current) -= 10;
+              if (id(pwm_soft_current) < id(pwm_soft_target)) {
+                id(pwm_soft_current) = id(pwm_soft_target);
+              }
             }
+            id(pwm_percentuale).publish_state(id(pwm_soft_current));
+            id(pwm_attivo) = (id(pwm_percentuale).state > 0);
+            if (id(pwm_soft_current) == id(pwm_soft_target)) {
+              id(pwm_soft_start_active) = false;
+            }
+            id(aggiorna_stato_pompa1_mqtt).execute();
           }
-          id(pwm_percentuale) = id(pwm_soft_current);
-          id(pwm_attivo) = (id(pwm_percentuale) > 0);
-          if (id(pwm_soft_current) == id(pwm_soft_target)) {
-            id(pwm_soft_start_active) = false;
-          }
-          // Aggiorna MQTT solo durante il soft start
-          id(aggiorna_stato_pompa1_mqtt).execute();
-        }
 
   # Lambda per le temperature
   - interval: 1s
@@ -2314,7 +2337,7 @@ text_sensor:
       if (!id(pwm_attivo)) {
         return std::string("Disattivato");
       }
-      return std::to_string(id(pwm_percentuale));
+      return std::to_string(id(pwm_percentuale).state);
     update_interval: 5s      
     on_value:
       then:
@@ -2361,7 +2384,7 @@ time:
                 ESP_LOGI("SAFE PUMP", "Attivazione preventiva pompa 1 per antiblocco");
                 id(pompa1).turn_on();
                 id(richiesta_softstart) = false;
-                id(pwm_percentuale) = 30;
+                id(pwm_percentuale).publish_state(30);
                 delay(5000);  // 5 secondi
                 id(pompa1).turn_off();
               }              
