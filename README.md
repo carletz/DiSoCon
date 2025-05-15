@@ -219,13 +219,3 @@ The author(s) of this repository do **not take any responsibility** for:
 Any implementation of this project in real-world systems should be done **under the responsibility of a qualified professional**, and in compliance with local regulations and safety standards.
 
 By using this material, you acknowledge that it is offered **as-is, without warranty of any kind**, and you agree to use it **at your own risk**.
-
-## 🌍 Language Note
-
-Please note that some of the documentation and schematic files included in this project are written in **Italian**.
-
-This is because the project was originally developed and documented for local use. I plan to translate all materials into **English** as time permits, to make the project more accessible to the international community.
-
-If you need help understanding any specific part, feel free to open an issue or contact me — I'll be happy to help.
-
-Grazie for your patience! 🇮🇹🙂
