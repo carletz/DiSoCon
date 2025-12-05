@@ -1,5 +1,5 @@
-# DiSoCon
-# ☀️ Differential Solar Controller – 2025
+# DiSoCon2
+# ☀️ Differential Solar Controller V2 – 2025
 
 This project is a modular **differential solar thermal controller** designed for systems with multiple thermal storage tanks. It supports:
 - A **primary pump** for the solar panels
@@ -18,20 +18,21 @@ The current controller is a classic type without any type of integration with ho
 I decided to take inspiration from the manual of my controller, from a triac control of 230V motors, and from a PT1000 probe reader, like the one I currently have installed on the panels and cannot remove or replace. 
 For this reason this project was born and now, in the final stages of testing, I would like to share it for inspiration or comments.
 
+V2: This new release integrate into one board the controller and the temperature measurement board. the functionality is the same, the code a little bit different.
+
 ---
 ## 🧩 System Architecture
 
-### 1. Temperature Module (V1.1)
-- Interfaces with up to 4 PT1000 temperature sensors and DS18B20 probes for others temperature. The PT1000 are designed for the solar panels, tank and normal hot water
-- Provides real-time thermal data for control logic
-
-### 2. Control Logic (V3.2)
+### 1. Control Board (V2)
 - Based on a microcontroller (ESP32-S3)
 - Controls triacs for pumps and relays valves (check your voltage and characteristic based on your system, this one is designed for a normal 230V power supply)
 - Accepts analog/digital inputs (buttons, override switches, etc.)
 - Manages logic for differential temperature thresholds, hysteresis, timing, and safety
+- Interfaces with up to 4 PT1000 temperature sensors and DS18B20 probes for others temperature. The PT1000 are designed for the solar panels, tank and normal hot water
+- Provides real-time thermal data for control logic
+- Possibility to connect also with RS-485 interface
 
-### 3. Power Board (V2.0)
+### 2. Power Board (V2)
 - Drives relays and triacs for high-current devices
 - Features optoisolated inputs and snubber circuits
 
@@ -41,91 +42,16 @@ For this reason this project was born and now, in the final stages of testing, I
 
 All hardware schematics are provided in PDF format:
 
-### 1. Temperature Module (V1.1)
-The module is designed to:
+### 1. Control Board (V2) 
+This board is the **core controller** of a modular solar thermal system. It processes temperature readings, applies control logic, and operates pumps and 3-way valves for dynamic thermal management across multiple storage tanks.
+
+![Render 1](Control%20Board/front.png)
+![Render 2](Control%20Board/back.png)
+
+#### 🎯 Purpose
+The main board is designed to:
 - Read temperatures from solar collectors, buffer tanks, and return lines
 - Convert sensor values to analog signals via operational amplifiers
-- Transmit readings to the control unit via **RS485 serial communication**
-
-It is fully compatible with microcontroller-based systems like ESP32, Arduino, or ATmega32U4 (as used in this design).
-
-#### 🧩 Main Components
-
-| Component      | Description                              |
-|----------------|------------------------------------------|
-| **MCP6004**    | Quad op-amp for sensor signal processing |
-| **MAX13487E**  | RS485 differential transceiver           |
-| **ATmega32U4** | Microcontroller managing data logic      |
-| **DALC208SC6** | ESD protection for sensor lines          |
-| **USB Type-C** | Optional programming/debug interface     |
-| **BL1117-33**  | 3.3V regulator for analog/digital lines  |
-| **ICSP header** | First time programming interface        |
-
-#### 🔧 Key Features
-
-- Supports up to **4 analog temperature channels**
-- Sensor power enable lines (`TEMP_ENBx`) for selective powering
-- Signal amplification and filtering per channel
-- Differential RS485 interface for reliable long-distance communication
-- Galvanic isolation and protection circuits on all inputs
-- USB Type-C interface for programming or debugging
-
-#### 🧠 Functional Overview
-
-1. **Sensor Input**
-   - Each temperature channel uses a voltage divider with precise resistors and capacitors for noise filtering.
-   - Inputs labeled `IN+1`, `IN+2`, etc., receive analog sensor signals.
-
-2. **Amplification**
-   - Signals are routed through MCP6004 op-amps.
-   - Outputs `TEMP_OUT1`, `TEMP_OUT2`, etc., carry conditioned analog signals.
-
-3. **Data Handling**
-   - The ATmega32U4 samples each analog signal and prepares the data packet.
-   - A protocol handler then sends the data via RS485 using the MAX13487 driver.
-
-4. **Communication**
-   - Pins `485TX` and `485RX` connect to the control board over twisted pair cabling.
-   - The board can be addressed or identified via firmware if needed.
-
-### 2. Control Logic (V3.2) 
-This board is the **core controller** of a modular solar thermal system. It processes temperature readings (received via RS485), applies control logic, and operates pumps and 3-way valves for dynamic thermal management across multiple storage tanks.
-
-#### 🎯 Purpose
-
-The main board is designed to:
-- Receive temperature data via **RS485** from external sensor boards
-- Execute differential logic (ΔT) to optimize energy transfer
-- Drive up to **3 pumps** and **2 3-way valves**
-- Provide optional control over final delivery circuits
-- Connect to network systems via **Ethernet (W5500)** or USB
-- Display system status on an **I2C LCD**
-
-#### 🧩 Key Modules & Features
-
-##### 🔧 Microcontroller
-- **ESP32-S3** module for logic processing
-- USB Type-C for programming and debugging
-- I2C ADC (ADS1115) for buttons inputs
-
-##### ⚡ Power & Outputs
-- 5 powered outputs for **pumps and valves** (via relay/Triacs)
-- "ZEROCROSS" signal input for phase control
-- Output enable pins with snubber & protection circuits
-
-##### 🔌 Communication
-- RS485 transceiver (**MAX13487**) for remote sensor integration
-- W5500 Ethernet controller with integrated magnetics
-- USB-C for firmware upload
-
-##### 🖥️ User Interface
-- **20x4 I2C LCD** with backlight control
-- 5-button interface (UP, DOWN, LEFT, RIGHT, OK)
-- LED indicators for relay status
-
-#### 🎯 Purpose
-The main board is designed to:
-- Receive temperature data via **RS485** from external sensor boards
 - Execute differential logic (ΔT) to optimize energy transfer
 - Drive up to **3 pumps** and **2 3-way valves**
 - Provide optional control over final delivery circuits
@@ -135,15 +61,9 @@ The main board is designed to:
 #### 🧩 Key Modules & Features
 
 ##### 🔧 Microcontroller
-- **ESP32-WROOM-32** module for logic processing
+- **ESP32-S3** module for logic processing
 - USB Type-C for programming and debugging
-- IO expander (PCF8574) for button matrix and relay control
-- I2C ADC (ADS1115) for additional analog inputs
-
-##### ⚡ Power & Outputs
-- 5 powered outputs for **pumps and valves** (via relay/MOSFET)
-- "ZEROCROSS" signal input for phase control
-- Output enable pins with snubber & protection circuits
+- I2C ADC (ADS1115) for buttons inputs
 
 ##### 🔌 Communication
 - RS485 transceiver (**MAX13487**) for remote sensor integration
@@ -153,11 +73,13 @@ The main board is designed to:
 ##### 🖥️ User Interface
 - **20x4 I2C LCD** with backlight control
 - 5-button interface (UP, DOWN, LEFT, RIGHT, OK)
-- LED indicators for relay status
 
 
-### 3. Power Board (V2.0)
+### 2. Power Board (V2)
 This board provides the **power interface** for a differential solar thermal controller. It manages relays, TRIACs, and optoisolators to drive **AC pumps**, **3-way valves**, and other inductive loads safely and efficiently.
+
+![Render 3](Power%20Board/front.png)
+![Render 4](Power%20Board/back.png)
 
 #### 🎯 Purpose
 
@@ -179,6 +101,7 @@ The power board is designed to:
 - **2 x Relay outputs** for 3-way valve actuation (VALVOLA1 / VALVOLA2)
 - **2 x TRIAC circuits** (with MOC3021 + BTA41) for motor/pump control
 - Optical isolation on both relays and TRIAC gates
+- LED indicators for relay status
 
 ##### 📈 Zero-Cross Detection
 - Optocoupler + RC filtering network to detect AC phase crossing
@@ -200,10 +123,9 @@ The power board is designed to:
 
 ## 📅 Version Info
 
-- Temperature board: **V1.1**
-- Control board: **V3.2**
-- Power board: **V2.0**
-- Date: April 2025
+- Control board: **V2**
+- Power board: **V2**
+- Date: December 2025
 
 ---
 
