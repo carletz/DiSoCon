@@ -1,6 +1,8 @@
 # DiSoCon
 # ☀️ Differential Solar Controller – 2025
 
+# UPDATED TO V2... this is the old design
+
 This project is a modular **differential solar thermal controller** designed for systems with multiple thermal storage tanks. It supports:
 - A **primary pump** for the solar panels
 - A **3-way valve** to switch between **two storage tanks**
@@ -48,20 +50,6 @@ The module is designed to:
 - Transmit readings to the control unit via **RS485 serial communication**
 
 It is fully compatible with microcontroller-based systems like ESP32, Arduino, or ATmega32U4 (as used in this design).
-
-#### 🧩 Main Components
-
-| Component      | Description                              |
-|----------------|------------------------------------------|
-| **MCP6004**    | Quad op-amp for sensor signal processing |
-| **MAX13487E**  | RS485 differential transceiver           |
-| **ATmega32U4** | Microcontroller managing data logic      |
-| **DALC208SC6** | ESD protection for sensor lines          |
-| **USB Type-C** | Optional programming/debug interface     |
-| **BL1117-33**  | 3.3V regulator for analog/digital lines  |
-| **ICSP header** | First time programming interface        |
-
-#### 🔧 Key Features
 
 - Supports up to **4 analog temperature channels**
 - Sensor power enable lines (`TEMP_ENBx`) for selective powering
@@ -122,39 +110,6 @@ The main board is designed to:
 - **20x4 I2C LCD** with backlight control
 - 5-button interface (UP, DOWN, LEFT, RIGHT, OK)
 - LED indicators for relay status
-
-#### 🎯 Purpose
-The main board is designed to:
-- Receive temperature data via **RS485** from external sensor boards
-- Execute differential logic (ΔT) to optimize energy transfer
-- Drive up to **3 pumps** and **2 3-way valves**
-- Provide optional control over final delivery circuits
-- Connect to network systems via **Ethernet (W5500)** or WiFi
-- Display system status on an **I2C LCD**
-
-#### 🧩 Key Modules & Features
-
-##### 🔧 Microcontroller
-- **ESP32-WROOM-32** module for logic processing
-- USB Type-C for programming and debugging
-- IO expander (PCF8574) for button matrix and relay control
-- I2C ADC (ADS1115) for additional analog inputs
-
-##### ⚡ Power & Outputs
-- 5 powered outputs for **pumps and valves** (via relay/MOSFET)
-- "ZEROCROSS" signal input for phase control
-- Output enable pins with snubber & protection circuits
-
-##### 🔌 Communication
-- RS485 transceiver (**MAX13487**) for remote sensor integration
-- W5500 Ethernet controller with integrated magnetics
-- USB-C for firmware upload
-
-##### 🖥️ User Interface
-- **20x4 I2C LCD** with backlight control
-- 5-button interface (UP, DOWN, LEFT, RIGHT, OK)
-- LED indicators for relay status
-
 
 ### 3. Power Board (V2.0)
 This board provides the **power interface** for a differential solar thermal controller. It manages relays, TRIACs, and optoisolators to drive **AC pumps**, **3-way valves**, and other inductive loads safely and efficiently.
