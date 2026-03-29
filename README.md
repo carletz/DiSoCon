@@ -41,14 +41,14 @@ The project is split into two physically separate boards that connect via a 10-p
 
 ```
 ┌─────────────────────────────────────────────────┐
-│              CONTROL BOARD (Full Board V2)       │
-│                                                  │
+│              CONTROL BOARD (Full Board V2)      │
+│                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
 │  │ ATmega   │  │ ESP32-S3 │  │  W5500        │  │
 │  │ 32U4     │◄─► (main    │  │  Ethernet     │  │
 │  │ PT1000   │  │  ESPHome)│  │  Controller   │  │
 │  │ front-end│  └────┬─────┘  └───────────────┘  │
-│  └──────────┘       │                            │
+│  └──────────┘       │                           │
 │  ┌──────────┐  ┌────┴─────┐  ┌───────────────┐  │
 │  │ MCP6004  │  │ MAX13487 │  │  ADS1115      │  │
 │  │ 4ch OPV  │  │  RS-485  │  │  Button ADC   │  │
@@ -56,17 +56,17 @@ The project is split into two physically separate boards that connect via a 10-p
 └─────────────────────┬───────────────────────────┘
                       │ 10-pin ribbon (CN3)
 ┌─────────────────────┴───────────────────────────┐
-│              POWER BOARD (Power Board V2)        │
-│                                                  │
+│              POWER BOARD (Power Board V2)       │
+│                                                 │
 │  ┌──────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │ HLK-PM01 │  │ 2× BTA41     │  │ 2× SRD   │  │
+│  │ HLK-PM01 │  │ 2× BTA41     │  │ 2× SRD    │  │
 │  │ AC→5V    │  │ TRIAC pumps  │  │ relays    │  │
 │  └──────────┘  │ + MOC3021    │  │ valves    │  │
 │                │ + snubber    │  └───────────┘  │
 │  ┌──────────┐  └──────────────┘                 │
-│  │ ZeroCross│  MB10S bridge + LTV-817C           │
-│  │ detector │  → ZEROCROSS signal to ESP32       │
-│  └──────────┘                                    │
+│  │ ZeroCross│  MB10S bridge + LTV-817C          │
+│  │ detector │  → ZEROCROSS signal to ESP32      │
+│  └──────────┘                                   │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -286,7 +286,9 @@ By using this material you acknowledge it is offered **as-is, without warranty o
 ## 👤 Author
 
 **carletz** — [@carletz on GitHub](https://github.com/carletz)
+
 [YouTube: carletz](https://www.youtube.com/@carletzslug)
+
 [OSHWLab: carletz](https://oshwlab.com/carletz.slug/works)
 
 ---
