@@ -1,0 +1,19 @@
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: qio        # S3 supporta QIO, più veloce di DIO
+    board_build.flash_size: 8MB
+    board_build.partitions: default_8MB.csv  # sfrutta tutta la flash
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino #esp-idf
+    version: recommended
+    # sdkconfig_options:
+    #   CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+    #   CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
+    #   CONFIG_ESPTOOLPY_FLASHSIZE_8MB: "y"
+    #   CONFIG_PARTITION_TABLE_CUSTOM: "y"

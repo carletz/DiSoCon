@@ -1,0 +1,70 @@
+logger:
+  level: WARN
+  logs:
+    # ── Logica applicativa — solo warning e errori ──
+    centrale: WARN
+    mandata: WARN
+    sonda: WARN
+    custom: WARN
+    pompa1: WARN
+    script: WARN
+    serbatoio: WARN
+
+    # ── Silenziosi ──
+    SPLASH: ERROR
+    bottoni: ERROR
+    ads1115.sensor: ERROR
+    mqtt: ERROR
+    mqtt.component: ERROR
+    mqtt.number: ERROR
+    mqtt.switch: ERROR
+    mqtt.text_sensor: ERROR
+    mqtt.idf: ERROR
+    sntp: ERROR
+    ethernet: ERROR
+    ethernet_esp32: ERROR
+    component: ERROR
+    sensor: ERROR
+    display: ERROR
+    esp-idf: ERROR
+    scheduler: ERROR
+    text_sensor: ERROR
+    light: ERROR
+    switch: ERROR
+
+
+# logger:
+#   level: VERBOSE
+#   logs:
+#     # ── Mostra solo UART ──
+#     uart: VERBOSE
+#     uart_debug: VERBOSE
+#     custom: VERBOSE
+
+#     # ── Silenzia tutto il resto ──
+#     centrale: ERROR
+#     mandata: ERROR
+#     sonda: ERROR
+#     pompa1: ERROR
+#     script: ERROR
+#     serbatoio: ERROR
+#     SPLASH: ERROR
+#     bottoni: ERROR
+#     ads1115.sensor: ERROR
+#     mqtt: ERROR
+#     mqtt.component: ERROR
+#     mqtt.number: ERROR
+#     mqtt.switch: ERROR
+#     mqtt.text_sensor: ERROR
+#     mqtt.idf: ERROR
+#     sntp: ERROR
+#     ethernet: ERROR
+#     ethernet_esp32: ERROR
+#     component: ERROR
+#     sensor: ERROR
+#     display: ERROR
+#     esp-idf: ERROR
+#     scheduler: ERROR
+#     text_sensor: ERROR
+#     light: ERROR
+#     switch: ERROR

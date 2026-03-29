@@ -1,0 +1,204 @@
+display:
+  - platform: lcd_pcf8574
+    dimensions: 20x4
+    address: 0x27
+    update_interval: 1000ms
+    user_characters:
+      - position: 7  # freccia su
+        data: [0b00100, 0b01110, 0b11111, 0b11111, 0b00000, 0b00000, 0b00000, 0b00000]
+      - position: 1  # freccia giu
+        data: [0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b01110, 0b00100]
+      - position: 2  # sole
+        data: [0b00100, 0b10101, 0b01110, 0b11111, 0b01110, 0b10101, 0b00100, 0b00000]
+      - position: 3  # simbolo gradi
+        data: [0b01110, 0b01010, 0b01110, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]
+      - position: 4  # simbolo Delta
+        data: [0b00100, 0b00100, 0b01010, 0b01010, 0b10001, 0b10001, 0b11111, 0b00000]
+      - position: 5  # trattino doppio per trend stabile
+        data: [0b00000, 0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000]
+
+    lambda: |-
+      // Caratteri speciali
+      char gradi      = '\x03';
+      char delta      = '\x04';
+      char arrow_up   = '\x07';
+      char arrow_down = '\x01';
+      char arrow_flat = '\x05';
+
+      // Helper NaN — produce "---" se sonda in fault (3 char fissi per allineamento)
+      auto fmt_temp = [](float t, char* buf, int size) {
+        if (isnan(t)) {
+          snprintf(buf, size, "---");
+        } else {
+          snprintf(buf, size, "%3.0f", t);
+        }
+      };
+
+      // Helper pulizia riga — scrive padding a 20 char
+      auto clear_row = [&](int row) {
+        it.printf(0, row, "%-20s", "");
+      };
+
+      if (id(ota_in_progress)) {
+        it.print(0, 0,  "+------------------+");
+        it.print(0, 1,  "|   AGGIORNAMENTO  |");
+        it.print(0, 2,  "|    IN CORSO...   |");
+        it.printf(0, 3, "| Progresso: %3.0f%% |", id(ota_progress));
+        return;
+      }
+
+      // Splash screen
+      if (id(splash_screen)) {
+        char sole = '\x02';
+        it.backlight();
+        it.print(0, 0, "+------------------+");
+        it.printf(0, 1, "|   %c CENTRALE %c   |", sole, sole);
+        it.print(0, 2, "|   SOLARE v3.2    |");
+        it.print(0, 3, "+------------------+");
+        return;
+      }
+
+      // Display spento
+      if (!id(display_attivo)) {
+        it.clear();
+        it.no_backlight();
+        return;
+      }
+
+      // Retroilluminazione garantita quando display è attivo
+      it.backlight();
+
+      // Schermata principale
+      if (!id(scorrimento_attivo)) {
+        auto current_time = id(orologio).now();
+        if (current_time.is_valid()) {
+          char time_str[9];
+          char date_str[11];
+          sprintf(time_str, "%02d:%02d:%02d", current_time.hour, current_time.minute, current_time.second);
+          sprintf(date_str, "%02d/%02d/%04d", current_time.day_of_month, current_time.month, current_time.year);
+          it.printf(0, 0, "%s %s", time_str, date_str);  // 8+1+10 = 19 char
+        } else {
+          it.print(0, 0, "  Sync ora/data...  ");  // 20 char esatti
+        }
+
+        // Riga 1: 20 char esatti con padding esplicito
+        it.print(0, 1, id(centralina_attiva) ? "  CENTRALE  ATTIVA  " : "  CENTRALE  SPENTA  ");
+
+        // Riga 2: "Tpan:XXX°C  ΔT:XXX°C" = 5+3+2+2+3+3+2 = 20 char esatti
+        char buf_pan[4], buf_dt[4];
+        fmt_temp(id(temp_pannelli_solari).state, buf_pan, sizeof(buf_pan));
+        fmt_temp(id(delta_t).state, buf_dt, sizeof(buf_dt));
+        it.printf(0, 2, "Tpan:%s%cC  %cT:%s%cC", buf_pan, gradi, delta, buf_dt, gradi);
+
+        // Riga 3: "S1:XXX°C  Pompa: ON" / "S2:XXX°C  Pompa:OFF"
+        float s = id(use_solare_1).state ? id(temp_solare_1).state : id(temp_solare_2).state;
+        const char* sonda = id(use_solare_1).state ? "S1" : "S2";
+        const char* pompa = id(pompa1).state ? " ON" : "OFF";
+        char buf_s[4];
+        fmt_temp(s, buf_s, sizeof(buf_s));
+        it.printf(0, 3, "%s:%s%cC  Pompa:%s", sonda, buf_s, gradi, pompa);
+        return;
+      }
+
+      // Menu parametri — struttura unificata
+      if (id(menu_attivo) >= 1 && id(menu_attivo) <= 7) {
+        it.print(0, 0, "-Modifica parametri-");
+        clear_row(2);  // riga 2 sempre pulita (sovrascritta solo nel menu 4)
+        it.print(0, 3, "^/v modif    OK conf");
+        id(primo_ingresso_menu) = false;
+
+        if (id(menu_attivo) == 1) {
+          it.printf(0, 1, "Antigelo:   %4.1f%cC", id(temperatura_antigelo), gradi);
+        } else if (id(menu_attivo) == 2) {
+          it.printf(0, 1, "Temp Max:   %4.1f%cC", id(temperatura_massima), gradi);
+        } else if (id(menu_attivo) == 3) {
+          it.printf(0, 1, "Delta T:    %4.1f%cC", id(delta_t_setpoint), gradi);
+        } else if (id(menu_attivo) == 4) {
+          const char* stato_pompa = id(pompa1).state ? "ON " : "OFF";
+          it.printf(0, 1, "Pompa 1: %-11s", stato_pompa);
+          if (id(pompa1_manual_mode)) {
+            it.printf(0, 2, "PWM: %3.0f%%          ", id(pwm_percentuale).state);
+          }
+        } else if (id(menu_attivo) == 5) {
+          const char* stato_valvola = id(valvola1).state ? "ON " : "OFF";
+          it.printf(0, 1, "Valvola 1: %-9s", stato_valvola);
+        } else if (id(menu_attivo) == 6) {
+          const char* stato_pompa = id(pompa2).state ? "ON " : "OFF";
+          it.printf(0, 1, "Pompa 2: %-11s", stato_pompa);
+        } else if (id(menu_attivo) == 7) {
+          const char* stato_valvola = id(valvola2).state ? "ON " : "OFF";
+          it.printf(0, 1, "Valvola 2: %-9s", stato_valvola);
+        }
+        return;
+      }
+
+      // Schermate di scorrimento
+      if (id(schermata_attiva) == 0) {
+        // Schermata pannelli solari
+        char arrow = arrow_flat;
+        if (id(temp_trend_pannelli).state > 0) arrow = arrow_up;
+        else if (id(temp_trend_pannelli).state < 0) arrow = arrow_down;
+        char buf_t[4], buf_dt[4], buf_man[4], buf_rit[4];
+        fmt_temp(id(temp_pannelli_solari).state, buf_t,   sizeof(buf_t));
+        fmt_temp(id(delta_t).state,              buf_dt,  sizeof(buf_dt));
+        fmt_temp(id(temp_mandata_solare).state,  buf_man, sizeof(buf_man));
+        fmt_temp(id(temp_ritorno_solare).state,  buf_rit, sizeof(buf_rit));
+        it.print(0, 0,  "- PANNELLI  SOLARI -");
+        it.printf(0, 1, "  Temp:%s%cC  %c         ", buf_t, gradi, arrow);  // padding post-arrow
+        it.printf(0, 2, "  Delta T: %s%cC        ", buf_dt, gradi);         // padding fine riga
+        it.printf(0, 3, " \x01:%s%cC  \x07:%s%cC", buf_man, gradi, buf_rit, gradi);
+
+      } else if (id(schermata_attiva) == 1) {
+        // Schermata serbatoi
+        char buf_s1[4], buf_s2[4], buf_s1o[4], buf_s2o[4], buf_acs[4], buf_acsl[4];
+        fmt_temp(id(temp_solare_1).state,      buf_s1,   sizeof(buf_s1));
+        fmt_temp(id(temp_solare_2).state,      buf_s2,   sizeof(buf_s2));
+        fmt_temp(id(temp_solare1_sonde).state, buf_s1o,  sizeof(buf_s1o));
+        fmt_temp(id(temp_solare2_sonde).state, buf_s2o,  sizeof(buf_s2o));
+        fmt_temp(id(temp_acs_sonde).state,     buf_acs,  sizeof(buf_acs));
+        fmt_temp(id(temp_acs).state,           buf_acsl, sizeof(buf_acsl));
+        it.print(0, 0,  "- SERBATOI  SOLARE -");
+        it.printf(0, 1, "S1:%s%cC Out:%s%cC", buf_s1,  gradi, buf_s1o, gradi);
+        it.printf(0, 2, "S2:%s%cC Out:%s%cC", buf_s2,  gradi, buf_s2o, gradi);
+        it.printf(0, 3, "ACS:%s%cC Lo:%s%cC", buf_acs, gradi, buf_acsl, gradi);
+
+      } else if (id(schermata_attiva) == 2) {
+        // Schermata gestione solare
+        // Riga 1: "Pompa: ACCESA  V:SERB.1" = 7+6+2+2+6 = 23... ridotto a fit
+        const char* stato_pompa1   = id(pompa1).state ? "ACCESA" : "SPENTA";
+        const char* stato_valvola1 = id(valvola1).state ? "SERB.1" : "SERB.2";
+        it.print(0, 0, "- GESTIONE  SOLARE -");
+        it.printf(0, 1, "Pompa:%-6s  V:%s", stato_pompa1, stato_valvola1);  // 20 char esatti
+        it.printf(0, 2, "PWM:[");
+        int pwm_len = (int)(id(pwm_percentuale).state / 10);
+        for (int i = 0; i < 10; i++) {
+          it.print(5 + i, 2, i < pwm_len ? "\xFF" : " ");
+        }
+        it.printf(15, 2, "]%3d%%", (int)id(pwm_percentuale).state);
+        // stato logico: padding a 20 char per pulire residui
+        it.printf(0, 3, "%-20s", id(pwm_stato_logico).c_str());
+
+      } else if (id(schermata_attiva) == 3) {
+        // Schermata acqua calda
+        const char* stato_pompa2   = id(pompa2).state ? "ACCESA" : "SPENTA";
+        const char* stato_valvola2 = id(valvola2).state ? "SERBATOIO" : "CASA     ";
+        it.print(0, 0, "-STATO  ACQUA CALDA-");
+        if (!id(acqua_calda_attiva)) {
+          it.print(0, 1, "  ** NON ATTIVO **  ");  // 20 char esatti
+        } else {
+          clear_row(1);  // pulisce residui se si torna ad ATTIVO
+        }
+        it.printf(0, 2, "Pompa: %-13s", stato_pompa2);   // 20 char esatti
+        it.printf(0, 3, "Valvola: %-11s", stato_valvola2); // 20 char esatti
+
+      } else if (id(schermata_attiva) == 4) {
+        // Schermata rete
+        const char* ip  = id(ip_address).state.c_str();
+        const char* mac = id(mac_address).state.c_str();
+        it.print(0, 0, " - RETE  INTERNET - ");
+        // IP max 15 char — fallback se non connesso
+        it.printf(0, 1, "IP:%-17s", (strlen(ip) > 0 ? ip : "non connesso   "));
+        // MAC 17 char: "MA:xx:xx:xx:xx:xx:xx" = 20 char esatti
+        it.printf(0, 2, "MA:%-17s", mac);
+        clear_row(3);
+      }

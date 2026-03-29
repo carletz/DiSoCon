@@ -1,0 +1,17 @@
+output:
+  - platform: ac_dimmer
+    id: pompa1dimmer
+    gate_pin: GPIO14
+    zero_cross_pin:
+      number: GPIO36
+      mode:
+        input: true
+      inverted: yes
+
+light:
+  - platform: monochromatic
+    output: pompa1dimmer
+    id: pompa1_light
+    name: "Pompa 1 PWM"
+    restore_mode: ALWAYS_OFF
+    internal: True

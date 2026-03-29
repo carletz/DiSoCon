@@ -1,0 +1,11 @@
+button:
+  - platform: restart
+    name: "Solare Restart"
+    id: esp_reboot_button
+    icon: mdi:replay
+    on_press:
+      - mqtt.publish:
+          topic: ${main_topic}/${centrale_topic}/Riavvia/state
+          payload: "PRESSED"
+    web_server:
+      sorting_group_id: ordine_config  

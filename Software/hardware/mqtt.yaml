@@ -1,0 +1,297 @@
+mqtt:
+  broker: ${mqtt_address}
+  port: ${mqtt_port}
+  discovery: true
+  birth_message:
+    topic: ${main_topic}/state
+    payload: online
+  will_message:
+    topic: ${main_topic}/state
+    payload: offline
+  on_message:
+    - topic: ${main_topic}/${centrale_topic}/Automatica/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: centralina_switch
+            else:
+              - switch.turn_off: centralina_switch
+    - topic: ${main_topic}/${centrale_topic}/Riavvia/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - button.press: esp_reboot_button
+
+    - topic: ${main_topic}/${setpoint_topic}/Antigelo/command
+      then:
+        - number.set:
+            id: setpoint_antigelo
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str()); 
+
+    - topic: ${main_topic}/${setpoint_topic}/Max Temp/command
+      then:
+        - number.set:
+            id: setpoint_temp_max
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str()); 
+
+    - topic: ${main_topic}/${setpoint_topic}/Delta T/command
+      then:
+        - number.set:
+            id: setpoint_delta_t
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${setpoint_topic}/Delta T Minimo/command
+      then:
+        - number.set:
+            id: setpoint_delta_min
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${setpoint_topic}/Serbatoio 1 massimo/command
+      then:
+        - number.set:
+            id: setpoint_max_S1
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${setpoint_topic}/Serbatoio 2 massimo/command
+      then:
+        - number.set:
+            id: setpoint_max_S2
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${valvole_topic}/EV 1/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: valvola1
+            else:
+              - switch.turn_off: valvola1
+
+    - topic: ${main_topic}/${valvole_topic}/EV 2/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: valvola2
+            else:
+              - switch.turn_off: valvola2
+
+    - topic: ${main_topic}/${pompe_topic}/Consumo kWh/Pompa 1/command
+      then:
+        - text_sensor.template.publish:
+            id: consumo_pompa_1
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Potenza Attuale/Pompa 1/command
+      then:
+        - text_sensor.template.publish:
+            id: potenza_attuale_pompa_1
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Consumo kWh/Pompa 2/command
+      then:
+        - text_sensor.template.publish:
+            id: consumo_pompa_2
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Velocita Pompa 2/command
+      then:
+        - text_sensor.template.publish:
+            id: velocita_pompa_2
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 1/Tempo Totale/command
+      then:
+        - text_sensor.template.publish:
+            id: pompa_1_tempo_totale
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 1/Ultima Durata/command
+      then:
+        - text_sensor.template.publish:
+            id: pompa_1_ultima_durata
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/Tempo Totale/command
+      then:
+        - text_sensor.template.publish:
+            id: pompa_2_tempo_totale
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/Ultima Durata/command
+      then:
+        - text_sensor.template.publish:
+            id: pompa_2_ultima_durata
+            state: !lambda |-
+              if (x.empty()) {
+                return std::string("0");
+              }
+              bool ok = true; // Verifica se tutti i caratteri sono numeri (e poss. un segno)
+              for (char c : x) {
+                if (!(isdigit(c) || c=='-' || c=='+')) { ok = false; break; }
+              }
+              if (!ok) {
+                return std::string("errore");
+              }
+              return x;     // Altrimenti restituisci il payload originale
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 1/PWM/command
+      then:
+        - number.set:
+            id: pwm_percentuale
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/Parametri/Velocita/command
+      then:
+        - number.set:
+            id: velocita_pompa2
+            value: !lambda |-
+              if (x.empty()) return 0;
+              return (int)atoi(x.c_str());
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: pompa2
+            else:
+              - switch.turn_off: pompa2
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/Attiva/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: pompa1_manuale_on_off
+            else:
+              - switch.turn_off: pompa1_manuale_on_off
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: pompa1_manual_cmd
+            else:
+              - switch.turn_off: pompa1_manual_cmd
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/Attiva/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: pompa2_manuale_on_off
+            else:
+              - switch.turn_off: pompa2_manuale_on_off
+
+    - topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/command
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "ON";'
+            then:
+              - switch.turn_on: pompa2_manual_cmd
+            else:
+              - switch.turn_off: pompa2_manual_cmd

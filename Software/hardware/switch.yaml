@@ -1,0 +1,311 @@
+switch:
+  - platform: template
+    name: "Centralina in Automatico"
+    id: centralina_switch
+    icon: mdi:flash_auto
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(centralina_attiva) = true;
+          ESP_LOGI("centrale", "Controllo automatico ATTIVO");
+      - mqtt.publish:
+          topic: ${main_topic}/${centrale_topic}/Automatica/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          id(centralina_attiva) = false;
+          ESP_LOGW("centrale", "Controllo automatico DISATTIVATO");
+      - mqtt.publish:
+          topic: ${main_topic}/${centrale_topic}/Automatica/state
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 1
+
+  - platform: gpio
+    name: "Elettrovalvola 1 Solare"
+    id: valvola1
+    icon: mdi:valve
+    pin:
+      number: GPIO5
+      mode:
+        output: true
+      inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(ev1_start_time) = millis();
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 1/state
+            payload: "ON"
+            retain: true
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(ev1_start_time)) / 1000;
+            id(ev1_last_duration_sec) = duration;
+            id(ev1_total_time_sec) += duration;
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 1/state
+            payload: "OFF"
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola1
+      sorting_weight: 1
+
+  - platform: gpio
+    name: "Elettrovalvola 2 Ricircolo"
+    id: valvola2
+    icon: mdi:valve
+    pin:
+      number: GPIO17
+      mode:
+        output: true
+      inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(ev2_start_time) = millis();
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 2/state
+            payload: "ON"
+            retain: true
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(ev2_start_time)) / 1000;
+            id(ev2_last_duration_sec) = duration;
+            id(ev2_total_time_sec) += duration;
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 2/state
+            payload: "OFF"
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola2
+      sorting_weight: 10
+
+  - platform: template
+    name: "Accensione"
+    id: pompa1
+    icon: mdi:pump
+    lambda: |-
+      return id(pwm_attivo);
+    turn_on_action:
+      - light.turn_on:
+          id: pompa1_light
+          brightness: !lambda "return id(pwm_percentuale).state;"
+      - lambda: |-
+          id(pwm_attivo) = true;
+          // Registra il momento di avvio per il periodo di grazia del controllore mandata
+          id(tempo_avvio_pompa) = millis();
+          id(cicli_negativi_mandata) = 0;
+      - script.execute: aggiorna_stato_pompa1_mqtt
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/state
+          payload: "ON"
+          retain: true
+    turn_off_action:
+      - light.turn_off: pompa1_light
+      - lambda: |-
+          id(pwm_attivo) = false;
+      - script.execute: aggiorna_stato_pompa1_mqtt
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/state
+          payload: "OFF"
+          retain: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 2
+
+  - platform: template
+    name: "Reset Consumo"
+    id: reset_pompa1_kwh
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: |-
+          id(pompa1_consumo_kwh) = 0.0;
+          ESP_LOGI("consumo", "Contatore Pompa 1 resettato.");
+      - switch.turn_off: reset_pompa1_kwh
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 10
+
+  - platform: gpio
+    # FIX 8: rimosso spazio trailing dal name
+    name: "Accensione Pompa 2"
+    id: pompa2
+    pin: GPIO13
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(pompa2_start_time) = millis();
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 2/state
+            payload: "ON"
+            retain: true
+    on_turn_off:
+      then:
+        - lambda: |-
+            unsigned long duration = (millis() - id(pompa2_start_time)) / 1000;
+            id(pompa2_last_duration_sec) = duration;
+            id(pompa2_total_time_sec) += duration;
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 2/state
+            payload: "OFF"
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 1
+
+  - platform: template
+    # FIX 8: rimosso spazio trailing dal name
+    name: "Reset Consumo Pompa 2"
+    id: reset_pompa2_kwh
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: |-
+          id(pompa2_consumo_kwh) = 0.0;
+          ESP_LOGI("consumo", "Contatore Pompa 2 resettato.");
+      - switch.turn_off: reset_pompa2_kwh
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 10
+
+  - platform: template
+    name: "Modalità Manuale"
+    id: pompa1_manual_cmd
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pompa1_manual_mode) = true;
+          id(pwm_stato_logico) = "MANUALE";
+          ESP_LOGI("pompa1", "Modalità manuale attiva");
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          id(pompa1_manual_mode) = false;
+          id(pwm_stato_logico) = "AUTO";
+          ESP_LOGI("pompa1", "Modalità automatica attiva");
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/state
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 3
+
+  - platform: template
+    name: "PWM Attivo"
+    id: pwm_pompa1_enable
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pwm_attivo) = true;
+    on_turn_off:
+      - lambda: |-
+          id(pwm_attivo) = false;
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 2
+
+  - platform: template
+    name: "ON/OFF Manuale"
+    id: pompa1_manuale_on_off
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          if (id(pompa1_manual_mode)) {
+            id(pwm_attivo) = true;
+            id(pwm_percentuale).publish_state(100);
+            // FIX 9: accensione immediata senza attendere il ciclo da 3s
+            id(pompa1).turn_on();
+          }
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/Attiva/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          if (id(pompa1_manual_mode)) {
+            id(pwm_attivo) = false;
+            id(pwm_percentuale).publish_state(0);
+            // FIX 9: spegnimento immediato senza attendere il ciclo da 3s
+            id(pompa1).turn_off();
+          }
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 1/Modalità manuale/Attiva/state
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 4
+
+  - platform: template
+    # FIX 8: rimosso spazio trailing dal name
+    name: "Modalità Manuale Pompa 2"
+    id: pompa2_manual_cmd
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          id(pompa2_manual_mode) = true;
+          ESP_LOGI("pompa2", "Modalità manuale attiva");
+      - switch.turn_off: pompa2
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          id(pompa2_manual_mode) = false;
+          ESP_LOGI("pompa2", "Modalità automatica attiva");
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/state
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 3
+
+  - platform: template
+    # FIX 8: rimosso spazio trailing dal name
+    name: "ON/OFF Manuale Pompa 2"
+    id: pompa2_manuale_on_off
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      - lambda: |-
+          if (id(pompa2_manual_mode)) {
+            id(pompa2).turn_on();
+            ESP_LOGI("pompa2", "Pompa 2 accesa in manuale");
+          }
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/Attiva/state
+          payload: "ON"
+          retain: true
+    on_turn_off:
+      - lambda: |-
+          if (id(pompa2_manual_mode)) {
+            id(pompa2).turn_off();
+            ESP_LOGI("pompa2", "Pompa 2 spenta in manuale");
+          }
+      - mqtt.publish:
+          topic: ${main_topic}/${pompe_topic}/Pompa 2/Modalità manuale/Attiva/state
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 4

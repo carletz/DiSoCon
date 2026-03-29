@@ -1,0 +1,62 @@
+script:
+  - id: cambia_valore_menu
+    mode: queued  # Permette l'esecuzione in coda senza bloccare
+    parameters:
+      direzione: int
+    then:
+      - lambda: |-
+          if (id(menu_attivo) == 1) {
+            id(temperatura_antigelo) += direzione * 0.5;
+          } else if (id(menu_attivo) == 2) {
+            id(temperatura_massima) += direzione * 1.0;
+          } else if (id(menu_attivo) == 3) {
+            id(delta_t_setpoint) += direzione * 0.5;
+          } else if (id(menu_attivo) == 4) {
+            if (direzione > 0) {
+              id(pompa1_manual_mode) = true;
+              id(pompa1).turn_on();
+            } else {
+              id(pompa1_manual_mode) = false;
+              id(pompa1).turn_off();
+            }
+          } else if (id(menu_attivo) == 5) {
+            if (direzione > 0) {
+              id(valvola1).turn_on();
+            } else {
+              id(valvola1).turn_off();
+            }
+          } else if (id(menu_attivo) == 6) {
+            if (direzione > 0) {
+              id(pompa2).turn_on();
+            } else {
+              id(pompa2).turn_off();
+            }
+          } else if (id(menu_attivo) == 7) {
+            if (direzione > 0) {
+              id(valvola2).turn_on();
+            } else {
+              id(valvola2).turn_off();
+            }
+          }
+          ESP_LOGI("MENU", "Valore modificato: %d", id(menu_attivo));
+
+  - id: aggiorna_stato_pompa1_mqtt
+    then:
+      - lambda: |-
+          // FIX 1: last_pwm/state/mode spostate in globals (static non persiste in lambda)
+          std::string pwm = std::to_string((int)id(pwm_percentuale).state);
+          std::string stato = (id(pwm_attivo) && id(pwm_percentuale).state > 0) ? "ON" : "OFF";
+          std::string mode = id(pompa1_manual_mode) ? "MANUALE" : "AUTO";
+
+          if (pwm != id(last_pwm_mqtt)) {
+            mqtt::global_mqtt_client->publish("${main_topic}/${pompe_topic}/Pompa 1/PWM/state", pwm, 0, true);
+            id(last_pwm_mqtt) = pwm;
+          }
+          if (stato != id(last_state_mqtt)) {
+            mqtt::global_mqtt_client->publish("${main_topic}/${pompe_topic}/Pompa 1/state", stato, 0, true);
+            id(last_state_mqtt) = stato;
+          }
+          if (mode != id(last_mode_mqtt)) {
+            mqtt::global_mqtt_client->publish("${main_topic}/${pompe_topic}/Pompa 1/Modalita/state", mode, 0, true);
+            id(last_mode_mqtt) = mode;
+          }

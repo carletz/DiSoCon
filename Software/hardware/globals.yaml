@@ -1,0 +1,280 @@
+globals:
+  - id: ota_in_progress
+    type: bool
+    initial_value: "false"
+  - id: ota_progress
+    type: float
+    initial_value: "0.0"
+    
+  - id: pompa_emergenza_sonda
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+        
+  - id: last_uart_receive_time
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+  - id: stato_precedente_centralina
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+
+  - id: stato_serbatoio_attivo
+    type: bool
+    restore_value: true    # sopravvive al riavvio
+    initial_value: 'false'
+
+  - id: acqua_calda_attiva
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  - id: cicli_negativi_mandata
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  - id: tempo_avvio_pompa
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+        
+  - id: last_pwm_mqtt
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: last_state_mqtt
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: last_mode_mqtt
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: last_temp_pannelli
+    type: float
+    restore_value: false
+    initial_value: '0.0'
+
+  - id: primo_passaggio_splash
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+
+  - id: primo_ingresso_menu
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: centralina_attiva
+    type: bool
+    restore_value: true
+    initial_value: "true"
+
+  - id: richiesta_softstart
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: autorizzato_avvio_pwm
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pwm_livello_attivo
+    type: int
+    restore_value: no
+    initial_value: '0'  # 0 = spento, 1 = 30%, 2 = 50%, 3 = 75%, 4 = 100%
+    
+  - id: menu_attivo
+    type: int
+    restore_value: no
+    initial_value: "0"  # 0 significa nessun menù attivo, numeri successivi corrispondono ai vari menù
+    
+  - id: delta_t_setpoint
+    type: float
+    restore_value: no
+    initial_value: "8.0"
+    
+  - id: splash_screen
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: temperatura_antigelo
+    type: float
+    restore_value: no
+    initial_value: "5.0"
+    
+  - id: temperatura_massima
+    type: float
+    restore_value: no
+    initial_value: "100.0"
+    
+  - id: schermata_attiva
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: pompa1_stato
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa1_manual_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa2_stato
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: pompa2_manual_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: display_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+  - id: scorrimento_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'false'    
+
+  - id: last_activity_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'  # Inizializza con 0 (nessuna attività iniziale)
+
+  - id: pompa1_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa1_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa1_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: ev1_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev1_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev1_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: pompa2_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa2_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: pompa2_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'   
+
+  - id: ev2_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev2_total_time_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: ev2_last_duration_sec
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: sopra_soglia_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: era_sopra
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: tempo_totale
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_giorno
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_settimana
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: tempo_mese
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'    
+
+  # - id: pwm_percentuale
+  #   type: int
+  #   restore_value: no
+  #   initial_value: '0'  # da 0 a 100
+  - id: pwm_attivo
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: pwm_soft_start_active
+    type: bool
+    initial_value: "false"
+  - id: pwm_soft_target
+    type: int
+    initial_value: "0"
+  - id: pwm_soft_current
+    type: int
+    initial_value: "0"
+
+  - id: centrale_scroll_index
+    type: int
+    restore_value: no
+    initial_value: '0'    
+
+  - id: pompa1_consumo_kwh
+    type: float
+    restore_value: no
+    initial_value: "0.0"    
+  - id: pompa2_consumo_kwh
+    type: float
+    restore_value: no
+    initial_value: "0.0"    
+
+  - id: pwm_stato_logico
+    type: std::string
+    restore_value: no
+    initial_value: '"SPENTO"'
+
+  - id: pwm_potenza_attuale
+    type: float
+    restore_value: no
+    initial_value: '0.0' 
+
+  - id: prima_volta
+    type: bool
+    initial_value: "true"

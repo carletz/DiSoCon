@@ -1,0 +1,50 @@
+substitutions:
+# Nomi 
+  device_name:        "centralesolare"
+  friendly_name:      "Centrale Solare"
+
+# Parametri di rete
+  ip_address:         "192.168.1.43"
+  ip_gateway:         "192.168.1.1"
+  ip_subnet:          "255.255.255.0"
+  mqtt_address:       "192.168.1.42"
+  mqtt_port:          "1883"
+  timezone:           "Europe/Rome"
+
+# nomi mqtt
+  main_topic:         "Solare"
+  centrale_topic:     "Centrale"
+  diagnostica_topic:  "Diagnostica"
+  pompe_topic:        "Pompe"
+  sonde_topic:        "Sonde"
+  serbatoio_topic:    "Serbatoio"
+  pannelli_topic:     "Pannelli"
+  setpoint_topic:     "Setpoint"
+  valvole_topic:      "Valvole"
+  energia_topic:      "Energia Termica"
+
+packages: 
+  esp:           !include hardware/esp.yaml
+  ota:           !include hardware/ota.yaml
+  ethernet:      !include hardware/ethernet.yaml
+  web_server:    !include hardware/web_server.yaml
+  log:           !include hardware/log.yaml
+  display:       !include hardware/display.yaml
+  uart:          !include hardware/uart.yaml
+  i2c:           !include hardware/i2c.yaml
+  globals:       !include hardware/globals.yaml
+  mqtt:          !include hardware/mqtt.yaml    
+  output:        !include hardware/output.yaml
+  ads:           !include hardware/ads.yaml
+  switch:        !include hardware/switch.yaml
+  sensor:        !include hardware/sensor.yaml
+  number:        !include hardware/number.yaml
+  button:        !include hardware/button.yaml
+  binary_sensor: !include hardware/binary_sensor.yaml
+  script:        !include hardware/script.yaml
+  interval:      !include hardware/interval.yaml
+  text_sensor:   !include hardware/text_sensor.yaml
+  time:          !include hardware/time.yaml
+
+
+

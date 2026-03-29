@@ -1,0 +1,12 @@
+uart:
+  - id: uart_bus
+    baud_rate: 9600
+    rx_pin: GPIO21
+    tx_pin: GPIO4
+    # debug:
+    #   direction: BOTH
+    #   dummy_receiver: true
+    #   after:
+    #     delimiter: "\n"
+    #   sequence:
+    #     - lambda: UARTDebug::log_string(direction, bytes);

@@ -1,0 +1,268 @@
+binary_sensor:
+  - platform: template
+    name: "Tasto Destra"
+    internal: true
+    web_server:
+      sorting_group_id: ordine_sensor
+    lambda: |-
+      return (id(bottoni).state > 2.0 && id(bottoni).state < 2.3);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            if (!id(scorrimento_attivo)) {
+              id(scorrimento_attivo) = true;
+            } else {
+              id(schermata_attiva) = (id(schermata_attiva) + 1) % 5;
+            }
+          } else if (id(menu_attivo) > 0) {
+            id(menu_attivo) = (id(menu_attivo) % 7) + 1;
+          }
+          id(last_activity_time) = millis();
+          id(display_attivo) = true;
+          id(splash_screen) = false;
+
+  - platform: template
+    name: "Tasto Sinistra"
+    internal: true
+    web_server:
+      sorting_group_id: ordine_sensor
+    lambda: |-
+      return (id(bottoni).state > 0.8 && id(bottoni).state < 1.3);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            if (!id(scorrimento_attivo)) {
+              id(scorrimento_attivo) = true;
+            } else {
+              id(schermata_attiva) = (id(schermata_attiva) - 1 + 5) % 5;
+            }
+          } else if (id(menu_attivo) > 0) {
+            id(menu_attivo) = (id(menu_attivo) - 2 + 7) % 7 + 1;
+          }
+          id(last_activity_time) = millis();
+          id(display_attivo) = true;
+          id(splash_screen) = false;
+
+  - platform: template
+    name: "Tasto Su"
+    internal: true
+    web_server:
+      sorting_group_id: ordine_sensor
+    lambda: |-
+      return (id(bottoni).state > 2.5 && id(bottoni).state < 2.9);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            id(menu_attivo) = 1;
+            id(primo_ingresso_menu) = true;
+            id(scorrimento_attivo) = true;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+            id(last_activity_time) = millis();
+          } else {
+            id(last_activity_time) = millis();
+            if (id(primo_ingresso_menu)) {
+              id(primo_ingresso_menu) = false;
+            } else {
+              id(cambia_valore_menu)->execute(1);
+            }
+          }
+
+  - platform: template
+    name: "Tasto Giu"
+    internal: true
+    web_server:
+      sorting_group_id: ordine_sensor
+    lambda: |-
+      return (id(bottoni).state > 0.4 && id(bottoni).state < 0.65);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          if (id(menu_attivo) == 0) {
+            id(menu_attivo) = 1;
+            id(primo_ingresso_menu) = true;
+            id(scorrimento_attivo) = true;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+            id(last_activity_time) = millis();
+          } else {
+            id(last_activity_time) = millis();
+            if (id(primo_ingresso_menu)) {
+              id(primo_ingresso_menu) = false;
+            } else {
+              id(cambia_valore_menu)->execute(-1);
+            }
+          }
+
+  - platform: template
+    name: "Tasto OK"
+    internal: true
+    web_server:
+      sorting_group_id: ordine_sensor
+    lambda: |-
+      return (id(bottoni).state > 1.5 && id(bottoni).state < 1.75);
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - lambda: |-
+          id(menu_attivo) = 0;
+          id(schermata_attiva) = 0;
+          id(scorrimento_attivo) = false;
+          id(splash_screen) = false;
+          id(display_attivo) = true;
+          id(last_activity_time) = millis();
+
+  # FIX 1: stato_serbatoio_attivo in globals (static non persiste - commutazione non funzionava)
+  # FIX 3: rimosse last_temp_s1/s2 mai usate
+  # FIX 4: rimossi on_press/on_release ridondanti
+  - platform: template
+    name: "Uso Serbatoio"
+    id: use_solare_1
+    icon: mdi:valve
+    lambda: |-
+      float temp_s1 = id(temp_solare_1).state;
+      float temp_s2 = id(temp_solare_2).state;
+      float soglia_s2 = id(setpoint_max_S2).state;
+      float soglia_s1 = id(setpoint_max_S1).state;
+
+      if (isnan(temp_s1) || isnan(temp_s2)) {
+        ESP_LOGW("serbatoio", "Sonda non valida, commutazione sospesa.");
+        return id(stato_serbatoio_attivo);
+      }
+
+      if (!id(stato_serbatoio_attivo)) {
+        if (temp_s2 >= soglia_s2) {
+          id(stato_serbatoio_attivo) = true;
+          id(valvola1).turn_on();
+          ESP_LOGW("serbatoio", "S2 %.1fC >= %.1fC - commuto su S1.", temp_s2, soglia_s2);
+        }
+      } else {
+        if (temp_s1 >= soglia_s1) {
+          id(stato_serbatoio_attivo) = false;
+          id(valvola1).turn_off();
+          ESP_LOGW("serbatoio", "S1 %.1fC >= %.1fC - S1 saturo, torno a S2.", temp_s1, soglia_s1);
+        } else if (temp_s2 <= (soglia_s2 - 5.0f)) {
+          id(stato_serbatoio_attivo) = false;
+          id(valvola1).turn_off();
+          ESP_LOGW("serbatoio", "S2 %.1fC - raffreddato, torno a S2.", temp_s2);
+        }
+      }
+      return id(stato_serbatoio_attivo);
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${serbatoio_topic}/Serbatoio Attivo/state"
+            payload: !lambda 'return x ? "Serbatoio 1" : "Serbatoio 2";'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 1
+
+  - platform: template
+    id: pompa_timer
+    name: "Timer Attivo"
+    on_press:
+      - mqtt.publish:
+          topic: "${main_topic}/${pompe_topic}/Pompa 1/Timer Temperatura Offline/state"
+          payload: "ON"
+          retain: true
+    on_release:
+      - mqtt.publish:
+          topic: "${main_topic}/${pompe_topic}/Pompa 1/Timer Temperatura Offline/state"
+          payload: "OFF"
+          retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 1
+
+  # FIX 2: isnan() coerente con watchdog RS485 che pubblica NAN su fault
+  - platform: template
+    name: "Sonda Pannelli Connessa"
+    id: sonda_pannelli_ok
+    icon: mdi:cable
+    lambda: |-
+      return !isnan(id(temp_pannelli_solari).state);
+    device_class: connectivity
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Pannelli Solari/Connessa/state"
+            payload: !lambda 'return x ? "ON" : "OFF";'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_dia
+      sorting_weight: 1
+
+  - platform: template
+    name: "Sonda Serbatoio 1 Connessa"
+    id: sonda_solare1_ok
+    icon: mdi:cable
+    lambda: |-
+      return !isnan(id(temp_solare_1).state);
+    device_class: connectivity
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Serbatoio Solare 1/Connessa/state"
+            payload: !lambda 'return x ? "ON" : "OFF";'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_dia
+      sorting_weight: 3
+
+  - platform: template
+    name: "Sonda Serbatoio 2 Connessa"
+    id: sonda_solare2_ok
+    icon: mdi:cable
+    lambda: |-
+      return !isnan(id(temp_solare_2).state);
+    device_class: connectivity
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Serbatoio Solare 2/Connessa/state"
+            payload: !lambda 'return x ? "ON" : "OFF";'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_dia
+      sorting_weight: 4
+
+  - platform: template
+    name: "Sonda ACS Connessa"
+    id: sonda_acs_ok
+    icon: mdi:cable
+    lambda: |-
+      return !isnan(id(temp_acs).state);
+    device_class: connectivity
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/ACS/Connessa/state"
+            payload: !lambda 'return x ? "ON" : "OFF";'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_dia
+      sorting_weight: 2
+
+  - platform: template
+    name: "Attiva (PWM > 0)"
+    lambda: |-
+      return id(pwm_attivo) && id(pwm_percentuale).state > 0;
+    qos: 1
+    retain: true
+    state_topic: ${main_topic}/${pompe_topic}/Pompa 1/PWM attivo/state
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 1

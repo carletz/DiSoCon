@@ -1,0 +1,461 @@
+interval:
+  # ─────────────────────────────────────────────
+  #  1s — scroll display + soft start pompa PWM
+  # ─────────────────────────────────────────────
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(centrale_scroll_index) += 1;
+          if (id(centrale_scroll_index) > 100) {
+            id(centrale_scroll_index) = 0;
+          }
+      # Rampa soft start pompa PWM
+      - lambda: |-
+          if (id(pwm_soft_start_active)) {
+            if (id(pwm_soft_current) < id(pwm_soft_target)) {
+              id(pwm_soft_current) += 10;
+              if (id(pwm_soft_current) > id(pwm_soft_target)) {
+                id(pwm_soft_current) = id(pwm_soft_target);
+              }
+            } else if (id(pwm_soft_current) > id(pwm_soft_target)) {
+              id(pwm_soft_current) -= 10;
+              if (id(pwm_soft_current) < id(pwm_soft_target)) {
+                id(pwm_soft_current) = id(pwm_soft_target);
+              }
+            }
+            id(pwm_percentuale).publish_state(id(pwm_soft_current));
+            id(pwm_attivo) = (id(pwm_percentuale).state > 0);
+            if (id(pwm_soft_current) == id(pwm_soft_target)) {
+              id(pwm_soft_start_active) = false;
+            }
+            id(aggiorna_stato_pompa1_mqtt).execute();
+          }
+      # Lettura UART temperature ATmega — drena il buffer ogni secondo,
+      # pubblica ogni canale individualmente solo se il valore è valido.
+      # La pubblicazione è indipendente per canale: una sonda guasta
+      # non blocca la lettura delle altre.
+      - lambda: |-
+          uint8_t byte = 0;
+          static std::string line = "";
+
+          while (id(uart_bus).available()) {
+            if (!id(uart_bus).read_byte(&byte)) break;
+
+            if (byte == '\n') {
+              if (line.length() > 2 && line[1] == 'x') {
+                char type = line[0];
+                int idx = type - '0';
+                int temp_value = atoi(line.substr(2).c_str());
+
+                if (idx >= 0 && idx <= 3) {
+                  if (temp_value > 30000) {
+                    ESP_LOGW("custom", "ERRORE: Sonda fault (canale %c)", type);
+                    // non pubblica nulla su questo canale, gli altri non sono toccati
+                  } else {
+                    float temperature = temp_value / 10.0;
+                    id(last_uart_receive_time) = millis();
+
+                    if (idx == 0) {
+                      id(temp_pannelli_solari).publish_state(temperature);
+                    } else if (idx == 1) {
+                      id(temp_solare_1).publish_state(temperature);
+                    } else if (idx == 2) {
+                      id(temp_solare_2).publish_state(temperature);
+                    } else if (idx == 3) {
+                      id(temp_acs).publish_state(temperature);
+                    }
+                    ESP_LOGD("custom", "CH%d: %.1f°C", idx, temperature);
+                  }
+                }
+              }
+              line = "";
+            } else {
+              line += (char)byte;
+              if (line.length() > 20) {
+                ESP_LOGW("custom", "Buffer UART overflow, riga scartata.");
+                line = "";
+              }
+            }
+          }
+
+          // Watchdog: pubblica NAN solo se per 30s non arriva NULLA (ATmega morto)
+          if (id(last_uart_receive_time) > 0 &&
+              (millis() - id(last_uart_receive_time) > 30000)) {
+            ESP_LOGE("custom", "WATCHDOG: nessun dato UART da oltre 30s!");
+            id(temp_pannelli_solari).publish_state(NAN);
+            id(temp_solare_1).publish_state(NAN);
+            id(temp_solare_2).publish_state(NAN);
+            id(temp_acs).publish_state(NAN);
+            id(last_uart_receive_time) = millis();
+          }
+
+  # ─────────────────────────────────────────────
+  #  3s — logica controllo PWM pompa solare
+  # ─────────────────────────────────────────────
+  - interval: 3s
+    then:
+      - lambda: |-
+          // Se la pompa è in modalità manuale, la logica automatica non interviene
+          if (id(pompa1_manual_mode)) return;
+
+          // Sicurezza locale commutazione S2->S1: se S2 supera la soglia+2C
+          // e siamo ancora su S2, forza la commutazione indipendentemente dal binary_sensor
+          if (!id(stato_serbatoio_attivo) &&
+              !isnan(id(temp_solare_2).state) &&
+              id(temp_solare_2).state > id(setpoint_max_S2).state + 2.0f) {
+            id(stato_serbatoio_attivo) = true;
+            id(valvola1).turn_on();
+            ESP_LOGW("centrale", "SAFETY: commutazione forzata su S1, S2=%.1fC", id(temp_solare_2).state);
+          }
+
+          if (!id(centralina_attiva)) {
+            // OPT 1: stato_precedente_centralina in globals (static non persiste in lambda)
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != id(stato_precedente_centralina)) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              id(stato_precedente_centralina) = stato_attuale;
+            }
+            id(pwm_attivo) = false;
+            id(pompa1).turn_off();
+            return;
+          }
+
+          float t1 = id(temp_pannelli_solari).state;
+          float dt = id(delta_t).state;
+          float delta_max = id(delta_t_setpoint);
+          float delta_min = id(setpoint_delta_min).state;
+          float target_pwm = 0.0;
+          bool is_antigelo = false;
+
+          // Protezioni
+          if (t1 > id(temperatura_massima)) {
+            target_pwm = 1.0;
+            id(pwm_stato_logico) = "SURRISCALDAMENTO";
+            id(autorizzato_avvio_pwm) = false;
+            id(richiesta_softstart) = true;
+          } else if (t1 < id(temperatura_antigelo)) {
+            target_pwm = 0.3;
+            is_antigelo = true;
+            id(pwm_stato_logico) = "ANTIGELO";
+            id(autorizzato_avvio_pwm) = false;
+          } else {
+            if (!id(autorizzato_avvio_pwm)) {
+              if (dt >= delta_max) {
+                id(autorizzato_avvio_pwm) = true;
+              } else {
+                id(pwm_stato_logico) = "SPENTO";
+                id(pompa1).turn_off();
+                return;
+              }
+            }
+
+            if (id(autorizzato_avvio_pwm)) {
+              if (dt <= delta_min - 0.3) {
+                id(pwm_stato_logico) = "SPENTO";
+                id(pompa1).turn_off();
+                id(autorizzato_avvio_pwm) = false;
+                id(pwm_livello_attivo) = 0;
+                id(richiesta_softstart) = true;
+                return;
+              }
+
+              float p = (dt - delta_min) / (delta_max - delta_min);  // Normalizzato
+
+              // 🔁 Logica PWM con isteresi per evitare rimbalzi
+              switch (id(pwm_livello_attivo)) {
+                case 0:
+                  if (p >= 0.0 && p < 0.36) {
+                    target_pwm = 0.3; id(pwm_livello_attivo) = 1;
+                  } else if (p >= 0.42 && p < 0.56) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else if (p >= 0.62 && p < 0.76) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else if (p >= 0.82) {
+                    target_pwm = 1.0; id(pwm_livello_attivo) = 4;
+                  }
+                  break;
+                case 1:
+                  if (p < 0.34) {
+                    target_pwm = 0.3;
+                  } else if (p >= 0.42) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else {
+                    target_pwm = 0.3;
+                  }
+                  break;
+                case 2:
+                  if (p < 0.36) {
+                    target_pwm = 0.3; id(pwm_livello_attivo) = 1;
+                  } else if (p >= 0.58) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else {
+                    target_pwm = 0.5;
+                  }
+                  break;
+                case 3:
+                  if (p < 0.56) {
+                    target_pwm = 0.5; id(pwm_livello_attivo) = 2;
+                  } else if (p >= 0.78) {
+                    target_pwm = 1.0; id(pwm_livello_attivo) = 4;
+                  } else {
+                    target_pwm = 0.75;
+                  }
+                  break;
+                case 4:
+                  if (p < 0.76) {
+                    target_pwm = 0.75; id(pwm_livello_attivo) = 3;
+                  } else {
+                    target_pwm = 1.0;
+                  }
+                  break;
+              }
+
+              id(pwm_stato_logico) = "AUTO";
+            }
+          }
+
+          // OPT 2: antigelo usa soft start come tutti gli altri casi
+          if (is_antigelo) {
+            if (id(richiesta_softstart) || !id(pwm_attivo)) {
+              id(pwm_soft_start_active) = true;
+              id(pwm_soft_current) = 0;
+              id(pwm_soft_target) = int(target_pwm * 100);
+              id(pwm_percentuale).publish_state(id(pwm_soft_current));
+              id(pwm_attivo) = true;
+              id(richiesta_softstart) = false;
+              id(pwm_stato_logico) = "SOFTSTART";
+            }
+            return;
+          }
+
+          if (id(richiesta_softstart)) {
+            id(pwm_soft_start_active) = true;
+            id(pwm_soft_current) = 30;
+            id(pwm_soft_target) = int(target_pwm * 100);
+            id(pwm_percentuale).publish_state(id(pwm_soft_current));
+            id(pwm_attivo) = true;
+            id(richiesta_softstart) = false;
+            id(pwm_stato_logico) = "SOFTSTART";
+          } else {
+            id(pwm_attivo) = true;
+            id(pwm_percentuale).publish_state(int(target_pwm * 100));
+          }
+
+  # ─────────────────────────────────────────────
+  #  15s — conteggio tempo pannelli + controllo pompa timer + display timeout
+  # ─────────────────────────────────────────────
+  - interval: 15s
+    then:
+      # Conteggio tempo pannelli sopra 80°C
+      # OPT 4: era_sopra e sopra_soglia_start in globals (static non persiste in lambda)
+      - lambda: |-
+          float temp = id(temp_pannelli_solari).state;
+          if (temp > 80.0) {
+            if (!id(era_sopra)) {
+              id(sopra_soglia_start) = millis();
+              id(era_sopra) = true;
+            }
+          } else {
+            if (id(era_sopra)) {
+              unsigned long durata = (millis() - id(sopra_soglia_start)) / 1000;
+              id(tempo_totale) += durata;
+              id(tempo_giorno) += durata;
+              id(tempo_settimana) += durata;
+              id(tempo_mese) += durata;
+              id(era_sopra) = false;
+            }
+          }
+
+      # Controllore mandata pannelli
+      # Se la pompa e accesa, dopo 9 minuti di grazia controlla che la mandata
+      # sia effettivamente piu calda del serbatoio attivo di almeno delta_min.
+      # Se per 3 cicli consecutivi (45s) non lo e, spegne la pompa e avvisa.
+      - lambda: |-
+          // Solo se pompa accesa, non in manuale, centralina attiva
+          if (!id(pwm_attivo) || id(pompa1_manual_mode) || !id(centralina_attiva)) {
+            id(cicli_negativi_mandata) = 0;
+            return;
+          }
+
+          // Periodo di grazia: 9 minuti dall'avvio (circuito 270m ~35l si svuota in 7 min)
+          const uint32_t GRAZIA_MS = 540000;
+          if (millis() - id(tempo_avvio_pompa) < GRAZIA_MS) {
+            ESP_LOGD("mandata", "Grazia attiva, %.0f s rimanenti.",
+              (GRAZIA_MS - (millis() - id(tempo_avvio_pompa))) / 1000.0f);
+            return;
+          }
+
+          // Temperatura di riferimento: serbatoio che stiamo scaldando
+          float temp_rif = id(stato_serbatoio_attivo)
+            ? id(temp_solare_1).state
+            : id(temp_solare_2).state;
+
+          float temp_mandata = id(temp_mandata_solare).state;
+
+          // Salta se dati non validi
+          if (isnan(temp_mandata) || isnan(temp_rif)) {
+            ESP_LOGW("mandata", "Dati non validi, controllo sospeso.");
+            return;
+          }
+
+          float delta_mandata = temp_mandata - temp_rif;
+          float soglia = id(setpoint_delta_min).state;
+
+          if (delta_mandata < soglia) {
+            id(cicli_negativi_mandata) += 1;
+            ESP_LOGW("mandata", "Delta mandata %.1fC < soglia %.1fC - ciclo negativo %d/3.",
+              delta_mandata, soglia, id(cicli_negativi_mandata));
+          } else {
+            if (id(cicli_negativi_mandata) > 0) {
+              ESP_LOGI("mandata", "Delta mandata tornato positivo (%.1fC), reset contatore.", delta_mandata);
+            }
+            id(cicli_negativi_mandata) = 0;
+          }
+
+          // 3 cicli consecutivi negativi: spegni e avvisa
+          if (id(cicli_negativi_mandata) >= 3) {
+            ESP_LOGE("mandata", "ANOMALIA: mandata %.1fC sotto soglia per 3 cicli. Spegnimento.", temp_mandata);
+            id(pompa1).turn_off();
+            id(pwm_attivo) = false;
+            id(autorizzato_avvio_pwm) = false;
+            id(richiesta_softstart) = true;
+            id(pwm_stato_logico) = "ANOMALIA";
+            id(cicli_negativi_mandata) = 0;
+            mqtt::global_mqtt_client->publish(std::string("${main_topic}/${diagnostica_topic}/Anomalia Mandata"), std::string("ON"), 0, true);
+          }
+
+      # Rientro emergenza sonda PT1000: se pompa_emergenza_sonda attiva
+      # e la sonda torna in range valido, spegne la pompa precauzionale
+      - lambda: |-
+          if (!id(centralina_attiva)) return;
+          if (!id(pompa_emergenza_sonda) || !id(pompa_timer).state) return;
+
+          float t = id(temp_pannelli_solari).state;
+          // PT1000: range valido -10°C … 200°C
+          bool sonda_ok = !isnan(t) && t > -10.0 && t < 200.0;
+          if (sonda_ok) {
+            ESP_LOGI("sonda", "Sonda pannelli ripristinata (%.1fC), spegnimento pompa emergenza.", t);
+            id(pompa1).turn_off();
+            id(pompa_timer).publish_state(false);
+            id(pompa_emergenza_sonda) = false;
+          }
+
+      # Timeout menu/scorrimento display (15s di inattività)
+      - lambda: |-
+          const uint32_t timeout = 15000;
+          if ((id(menu_attivo) > 0 || id(scorrimento_attivo)) && (millis() - id(last_activity_time) > timeout)) {
+            id(menu_attivo) = 0;
+            id(scorrimento_attivo) = false;
+            id(schermata_attiva) = 0;
+            id(display_attivo) = true;
+            id(splash_screen) = false;
+          }
+
+  # ─────────────────────────────────────────────
+  #  10s — splash screen
+  #  OPT 5: primo_passaggio_splash in globals
+  # ─────────────────────────────────────────────
+  - interval: 10s
+    then:
+      - lambda: |-
+          if (id(primo_passaggio_splash)) {
+            id(primo_passaggio_splash) = false;
+            ESP_LOGI("SPLASH", "Splash ancora attivo, prima iterazione ignorata.");
+          } else {
+            ESP_LOGI("SPLASH", "Disattivo splash screen.");
+            id(splash_screen) = false;
+          }
+
+  # ─────────────────────────────────────────────
+  #  1min — calcolo consumo pompa 1 (PWM)
+  # ─────────────────────────────────────────────
+  - interval: 1min
+    then:
+      - lambda: |-
+          if (id(pwm_attivo) && id(pwm_percentuale).state > 0) {
+            const float P_nom = 80.0;
+            float pwm = id(pwm_percentuale).state / 100.0;
+            float energia = (pwm * P_nom) * (1.0 / 60.0) / 1000.0;  // kWh per 1 min
+            id(pompa1_consumo_kwh) += energia;
+            id(pwm_potenza_attuale) = pwm * P_nom;
+          }
+
+  # ─────────────────────────────────────────────
+  #  5min — display, consumo pompa 2, timer pompa, MQTT diagnostica
+  # ─────────────────────────────────────────────
+  - interval: 5min
+    then:
+      # OPT 6: rimosso doppio set display_attivo = false (era ridondante)
+      - lambda: |-
+          if (!id(splash_screen)) {
+            if (millis() - id(last_activity_time) > 120000) {  // 2 min di inattività
+              id(display_attivo) = false;
+            }
+          }
+      - lambda: |-
+          // Calcolo consumo Pompa 2 (velocità fissa)
+          if (id(pompa2).state) {
+            float potenza = 0.0;
+            int livello = int(id(velocita_pompa2));
+            if (livello == 1) potenza = 45.0;
+            else if (livello == 2) potenza = 65.0;
+            else if (livello == 3) potenza = 90.0;
+            float energia = (potenza * (5.0 / 60.0)) / 1000.0;  // kWh
+            id(pompa2_consumo_kwh) += energia;
+          }
+      # OPT 1: stato_precedente_centralina in globals, rimossa static
+      - lambda: |-
+          if (!id(centralina_attiva)) {
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != id(stato_precedente_centralina)) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              id(stato_precedente_centralina) = stato_attuale;
+            }
+            return;
+          }
+          // Timeout sicurezza: se pompa emergenza attiva da >5 min, spegni comunque
+          if (id(pompa_timer).state && id(pompa_emergenza_sonda)) {
+            ESP_LOGW("sonda", "Timeout 5min emergenza sonda, spegnimento forzato.");
+            id(pompa1).turn_off();
+            id(pompa_timer).publish_state(false);
+            id(pompa_emergenza_sonda) = false;
+          }
+      - mqtt.publish:
+          topic: "${main_topic}/${diagnostica_topic}/IP"
+          payload: !lambda 'return id(ip_address).state;'
+      - mqtt.publish:
+          topic: "${main_topic}/${diagnostica_topic}/DNS"
+          payload: !lambda 'return id(dns_address).state;'
+      - mqtt.publish:
+          topic: "${main_topic}/${diagnostica_topic}/MAC"
+          payload: !lambda 'return id(mac_address).state;'
+
+  # ─────────────────────────────────────────────
+  #  30min — protezione pannelli scollegati (12:00-16:00)
+  # ─────────────────────────────────────────────
+  - interval: 30min
+    then:
+      - lambda: |-
+          if (!id(centralina_attiva)) {
+            bool stato_attuale = id(centralina_attiva);
+            if (stato_attuale != id(stato_precedente_centralina)) {
+              ESP_LOGI("centrale", stato_attuale ? "Centralina attiva" : "Centralina disattivata");
+              id(stato_precedente_centralina) = stato_attuale;
+            }
+            return;
+          }
+          // Già in emergenza, non riattivare
+          if (id(pompa_emergenza_sonda)) return;
+
+          int h = id(orologio).now().hour;
+          if (h >= 12 && h <= 16) {
+            float t = id(temp_pannelli_solari).state;
+            // PT1000: guasto se NaN, cortocircuito (<-10°C) o circuito aperto (>200°C)
+            bool sonda_guasta = isnan(t) || t < -10.0 || t > 200.0;
+            if (sonda_guasta) {
+              ESP_LOGW("sonda", "Guasto sonda pannelli! Attivazione pompa precauzionale.");
+              id(pompa_emergenza_sonda) = true;
+              id(pompa1).turn_on();
+              id(pompa_timer).publish_state(true);
+            }
+          }

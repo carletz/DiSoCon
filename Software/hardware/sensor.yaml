@@ -1,0 +1,311 @@
+sensor:
+  - platform: ads1115
+    multiplexer: 'A0_GND'
+    id: bottoni
+    gain: 6.144
+    name: "Bottoni"
+    update_interval: 500ms
+    internal: true
+
+  - platform: internal_temperature
+    name: ESP Temperature
+    id: esp_temp
+    internal: true
+    unit_of_measurement: °C
+    device_class: TEMPERATURE
+    update_interval: 30s
+    entity_category: "diagnostic"
+
+  - platform: template
+    name: "ESP Temperatura"
+    id: esp_temp_template
+    icon: mdi:thermometer_add
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(esp_temp).state;
+    update_interval: 60s
+    state_topic: "${main_topic}/${diagnostica_topic}/Esp temperatura"
+    web_server:
+      sorting_group_id: ordine_varie
+      sorting_weight: 2
+
+  # FIX 3: uptime nativo invece di template che si leggeva da solo
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor_raw
+    icon: mdi:history
+    unit_of_measurement: "s"
+    update_interval: 10s
+    internal: true
+
+  - platform: template
+    name: "Pannelli Solari"
+    id: temp_pannelli_solari
+    icon: mdi:solar_power
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    filters:
+      # Punto 2: EMA attenua picchi singoli da rumore RS485/ADC (alpha=0.3 → -70% su spike)
+      - exponential_moving_average:
+          alpha: 0.3
+          send_every: 1
+    on_value:
+      then:
+        - lambda: |-
+            // FIX 2: last_temp_pannelli spostata in globals (static non persiste in lambda)
+            float last = id(last_temp_pannelli);
+            int trend = 0;
+            // Punto 5: soglia ±0.3°C evita trend oscillante su variazioni minime
+            if (x > last + 0.3) {
+              trend = 1;
+            } else if (x < last - 0.3) {
+              trend = -1;
+            }
+            id(temp_trend_pannelli).publish_state(trend);
+            id(last_temp_pannelli) = x;
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Pannelli Solari/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 1
+
+  - platform: template
+    id: temp_trend_pannelli
+    name: "Trend Numerico Temperatura"
+    internal: true
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Trend Pannelli Solari/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+
+  - platform: template
+    name: "Serbatoio Solare 1"
+    id: temp_solare_1
+    icon: mdi:shower
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    filters:
+      - exponential_moving_average:
+          alpha: 0.3
+          send_every: 1
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Solare 1/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 4
+
+  - platform: template
+    name: "Serbatoio Solare 2"
+    id: temp_solare_2
+    icon: mdi:shower
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    filters:
+      - exponential_moving_average:
+          alpha: 0.3
+          send_every: 1
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Solare 2/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 3
+
+  - platform: template
+    name: "Serbatoio ACS"
+    id: temp_acs
+    icon: mdi:shower
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 1s
+    filters:
+      - exponential_moving_average:
+          alpha: 0.3
+          send_every: 1
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/ACS/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 5
+
+  - platform: template
+    name: "Delta T"
+    id: delta_t
+    icon: mdi:thermostat_auto
+    unit_of_measurement: "°C"
+    lambda: |-
+      float temp_pannello = id(temp_pannelli_solari).state;
+      float serbatoio = id(use_solare_1).state
+        ? id(temp_solare_1).state
+        : id(temp_solare_2).state;
+      // FIX 4: usa isnan() coerente con watchdog che pubblica NAN su fault sonda
+      if (isnan(temp_pannello) || isnan(serbatoio)) {
+        return NAN;
+      }
+      return temp_pannello - serbatoio;
+    update_interval: 3s
+    filters:
+      # Punto 3: media su 3 campioni (finestra 9s) — smussa oscillazioni senza rallentare la risposta
+      - sliding_window_moving_average:
+          window_size: 3
+          send_every: 1
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "${main_topic}/${sonde_topic}/Delta T/state"
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 2
+
+  - platform: mqtt_subscribe
+    name: "Mandata Solare"
+    id: temp_mandata_solare
+    topic: "Caldaia/Temperature Solare/Mandata Solare"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 6
+
+  - platform: mqtt_subscribe
+    name: "Ritorno Solare"
+    id: temp_ritorno_solare
+    topic: "Caldaia/Temperature Solare/Ritorno Solare"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 7
+
+  - platform: mqtt_subscribe
+    name: "ACS Alta"
+    id: temp_acs_alta
+    topic: "Caldaia/Temperature ACS/ACS alta"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 9
+
+  - platform: mqtt_subscribe
+    name: "ACS Bassa"
+    id: temp_acs_esp
+    topic: "Caldaia/Temperature ACS/ACS"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 8
+
+  - platform: template
+    name: "ACS sonde"
+    id: temp_acs_sonde
+    unit_of_measurement: "°C"
+    update_interval: 10s
+    lambda: |-
+      if (!isnan(id(temp_acs_alta).state)) {
+        return id(temp_acs_alta).state;
+      } else if (!isnan(id(temp_acs_esp).state)) {
+        return id(temp_acs_esp).state;
+      } else {
+        return NAN;
+      }
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 10
+
+  - platform: mqtt_subscribe
+    name: "Solare 1 alto"
+    id: temp_solare1_sonde
+    topic: "Caldaia/Temperature Solare/Solare 1"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 11
+
+  - platform: mqtt_subscribe
+    name: "Solare 2 alto"
+    id: temp_solare2_sonde
+    topic: "Caldaia/Temperature Solare/Solare 2"
+    unit_of_measurement: "°C"
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 12
+
+  - platform: template
+    # Nota: portata simulata a 5 l/min — valore indicativo fino a installazione sensore reale
+    name: "Potenza Termica Istantanea (stimata)"
+    id: potenza_termica
+    icon: mdi:electric_meter
+    unit_of_measurement: "kW"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      const float cp = 4.18;       // kJ/kg·K
+      const float rho = 1.0;       // kg/l
+      const float portata = 5.0;   // l/min — simulato, sostituire con sensore reale
+      float dt = id(delta_t).state;
+      if (isnan(dt)) return NAN;
+      float potenza = (portata * rho * cp * dt) / 60.0;  // kW
+      return potenza / 1000.0;
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${energia_topic}/Potenza/state
+            payload: !lambda 'return to_string(x);'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 13
+
+  - platform: template
+    name: "Potenza Termica Istantanea"
+    id: potenza_termica_istantanea
+    icon: mdi:solar-power
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: |-
+      const float cp = 4.18;
+      const float rho = 1.0;
+      const float portata = 5.0;   // l/min — simulato
+      float dt = id(delta_t).state;
+      if (isnan(dt)) return NAN;
+      // Potenza in W: (kg/s) * cp * dt * 1000
+      return (portata / 60.0) * rho * cp * dt * 1000.0;
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 14
+
+  - platform: total_daily_energy
+    name: "Energia Termica Totale Giorno"
+    power_id: potenza_termica_istantanea   # ← punta al sensore in W
+    id: energia_termica_totale
+    icon: mdi:electric_meter
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${energia_topic}/Giorno/state
+            payload: !lambda 'return to_string(x);'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: 15

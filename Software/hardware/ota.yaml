@@ -1,0 +1,31 @@
+ota:
+  - platform: esphome
+    password: ""
+    on_begin:
+      then:
+        - globals.set:
+            id: ota_in_progress
+            value: "true"
+        - logger.log: "OTA avviato..."            
+    on_progress:
+      then:
+        - globals.set:
+            id: ota_progress
+            value: !lambda "return x;"
+        - logger.log:
+            format: "OTA progresso: %.0f%%"
+            args: ["x"]            
+    on_end:
+      then:
+        - globals.set:
+            id: ota_in_progress
+            value: "false"
+        - logger.log: "OTA completato, riavvio..."
+    on_error:
+      then:
+        - globals.set:
+            id: ota_in_progress
+            value: "false"
+        - logger.log:
+            format: "OTA errore! Codice: %d"
+            args: ["x"]            

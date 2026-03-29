@@ -1,0 +1,417 @@
+text_sensor:
+  - platform: version
+    name: "Solare Versione"
+    id: versione_esphome
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${diagnostica_topic}/Versione
+            payload: !lambda 'return x;'
+    web_server:
+      sorting_group_id: ordine_varie
+      sorting_weight: 1
+
+  - platform: ethernet_info
+    ip_address:
+      name: "Solare IP"
+      id: ip_address
+      web_server:
+        sorting_group_id: ordine_varie
+    dns_address:
+      name: "Solare DNS"
+      id: dns_address
+      web_server:
+        sorting_group_id: ordine_varie
+    mac_address:
+      name: "Solare MAC"
+      id: mac_address
+      web_server:
+        sorting_group_id: ordine_varie
+
+  - platform: template
+    name: "Uptime"
+    icon: mdi:history
+    update_interval: 10s
+    state_topic: "${main_topic}/${diagnostica_topic}/Uptime"
+    lambda: |-
+      uint32_t s = (uint32_t) id(uptime_sensor_raw).state;
+      uint32_t d = s / 86400;
+      s %= 86400;
+      uint32_t h = s / 3600;
+      s %= 3600;
+      uint32_t m = s / 60;
+      s %= 60;
+      char buf[32];
+      if (d > 0)
+        sprintf(buf, "%dd %02d:%02d:%02d", d, h, m, s);
+      else
+        sprintf(buf, "%02d:%02d:%02d", h, m, s);
+      return {buf};
+    web_server:
+      sorting_group_id: ordine_varie
+      sorting_weight: 1     
+
+  - platform: template
+    name: "Serbatoio In Uso"
+    lambda: |-
+      if (id(use_solare_1).state) {
+        return std::string("Serbatoio 1 in uso");
+      } else {
+        return std::string("Serbatoio 2 in uso");
+      }
+    update_interval: 10s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${serbatoio_topic}/In Uso/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: -2
+
+  - platform: template
+    name: "Trend Temperatura Pannelli"
+    id: temp_trend_pannelli_sensor
+    lambda: |-
+      int t = (int)id(temp_trend_pannelli).state;
+      if (t == 1) {
+        return {"🔺 Aumento"};
+      } else if (t == -1) {
+        return {"🔻 Calo"};
+      } else {
+        return {"➖ Stabile"};
+      }
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${sonde_topic}/Trend Pannelli Solari/Testo/state
+            payload: !lambda 'return x;'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_temp
+      sorting_weight: -1
+
+  - platform: template
+    name: "Tempo totale pannelli > 80°C"
+    lambda: |-
+      int sec = id(tempo_totale) % 60;
+      int min = id(tempo_totale) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pannelli_topic}/Tempi/Totale/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_tempi
+      sorting_weight: 10
+
+  - platform: template
+    name: "Tempo oggi pannelli > 80°C"
+    lambda: |-
+      int sec = id(tempo_giorno) % 60;
+      int min = id(tempo_giorno) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pannelli_topic}/Tempi/Giorno/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_tempi
+      sorting_weight: 11
+
+  - platform: template
+    name: "Tempo settimana pannelli > 80°C"
+    lambda: |-
+      int sec = id(tempo_settimana) % 60;
+      int min = id(tempo_settimana) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pannelli_topic}/Tempi/Settimana/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_tempi
+      sorting_weight: 12
+
+  - platform: template
+    name: "Tempo mese pannelli > 80°C"
+    lambda: |-
+      int sec = id(tempo_mese) % 60;
+      int min = id(tempo_mese) / 60;
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", min, sec);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pannelli_topic}/Tempi/Mese/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_tempi
+      sorting_weight: 13
+
+  - platform: template
+    name: "Tempo Totale EV1"
+    lambda: |-
+      int sec = id(ev1_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 1/Tempo Totale/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola1
+      sorting_weight: 6
+
+  - platform: template
+    name: "Ultima Durata EV1"
+    lambda: |-
+      int sec = id(ev1_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 1/Ultima Durata/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola1
+      sorting_weight: 7
+
+  - platform: template
+    name: "Tempo Totale EV2"
+    lambda: |-
+      int sec = id(ev2_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 2/Tempo Totale/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola2
+      sorting_weight: 6
+
+  - platform: template
+    name: "Ultima Durata EV2"
+    lambda: |-
+      int sec = id(ev2_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${valvole_topic}/EV 2/Ultima Durata/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_valvola2
+      sorting_weight: 7
+
+  - platform: template
+    name: "Consumo elettrico Pompa 1"
+    id: consumo_pompa_1
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f kWh", id(pompa1_consumo_kwh));
+      return {buf};
+    update_interval: 300s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Consumo kWh/Pompa 1/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 8
+
+  - platform: template
+    name: "Potenza Attuale Pompa 1"
+    id: potenza_attuale_pompa_1
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.1f W", id(pwm_potenza_attuale));
+      return {buf};
+    update_interval: 300s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Potenza Attuale/Pompa 1/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 9
+
+  - platform: template
+    name: "Consumo elettrico Pompa 2"
+    id: consumo_pompa_2
+    lambda: |-
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%.3f kWh", id(pompa2_consumo_kwh));
+      return {buf};
+    update_interval: 300s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Consumo kWh/Pompa 2/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 8
+
+  - platform: template
+    name: "Velocità Pompa 2"
+    id: velocita_pompa_2
+    lambda: |-
+      int valore = int(id(velocita_pompa2));
+      if (valore < 1 || valore > 3) {
+        return {"Valore errato"};
+      }
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%d", valore);
+      return {buf};
+    update_interval: 30s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Velocita Pompa 2/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 9
+
+  - platform: template
+    name: "Tempo Totale Pompa 1"
+    id: pompa_1_tempo_totale
+    lambda: |-
+      int sec = id(pompa1_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 1/Tempo Totale/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 10
+
+  - platform: template
+    name: "Ultima Durata Pompa 1"
+    id: pompa_1_ultima_durata
+    lambda: |-
+      int sec = id(pompa1_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 1/Ultima Durata/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 11
+
+  - platform: template
+    name: "Tempo Totale Pompa 2"
+    id: pompa_2_tempo_totale
+    lambda: |-
+      int sec = id(pompa2_total_time_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 2/Tempo Totale/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 10
+
+  - platform: template
+    name: "Ultima Durata Pompa 2"
+    id: pompa_2_ultima_durata
+    lambda: |-
+      int sec = id(pompa2_last_duration_sec);
+      int hours = sec / 3600;
+      int minutes = (sec % 3600) / 60;
+      char buffer[6];
+      snprintf(buffer, sizeof(buffer), "%02d:%02d", hours, minutes);
+      return {buffer};
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 2/Ultima Durata/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 11
+
+  - platform: template
+    name: "Stato PWM"
+    lambda: |-
+      if (!id(pwm_attivo)) {
+        return std::string("Disattivato");
+      }
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%.0f%%", id(pwm_percentuale).state);
+      return {buf};
+    update_interval: 5s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 1/PWM stato/state
+            payload: !lambda 'return x;'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: -1

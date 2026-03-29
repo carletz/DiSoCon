@@ -1,0 +1,42 @@
+time:
+  - platform: sntp
+    id: orologio
+    timezone: ${timezone}
+    servers:
+     - pool.ntp.org
+     - time.google.com
+    update_interval: 1s
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        days_of_week: MON
+        then:
+          - lambda: |-
+              id(tempo_settimana) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        days_of_month: 1
+        then:
+          - lambda: |-
+              id(tempo_mese) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              id(tempo_giorno) = 0;
+      - seconds: 0
+        minutes: 0
+        hours: 4  # orario di attivazione (puoi cambiarlo)
+        then:
+          - lambda: |-
+              if (id(pompa1_total_time_sec) < 60) {  // se ha funzionato meno di 1 minuto oggi
+                ESP_LOGI("SAFE PUMP", "Attivazione preventiva pompa 1 per antiblocco");
+                id(pompa1).turn_on();
+                id(richiesta_softstart) = false;
+                id(pwm_percentuale).publish_state(30);
+                delay(5000);  // 5 secondi
+                id(pompa1).turn_off();
+              }  

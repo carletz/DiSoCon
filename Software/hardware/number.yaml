@@ -1,0 +1,182 @@
+number:
+  - platform: template
+    name: "Setpoint Antigelo"
+    id: setpoint_antigelo
+    icon: mdi:severe_cold
+    min_value: -10
+    max_value: 20
+    step: 0.5
+    initial_value: 5.0
+    unit_of_measurement: "\u00b0C"
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - lambda: |-
+            id(temperatura_antigelo) = x;
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Antigelo/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 10
+
+  - platform: template
+    name: "Setpoint Temp. Massima"
+    id: setpoint_temp_max
+    icon: mdi:emergency_heat_2
+    min_value: 50
+    max_value: 130
+    step: 1
+    initial_value: 100.0
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "\u00b0C"
+    on_value:
+      then:
+        - lambda: |-
+            id(temperatura_massima) = x;
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Max Temp/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 9
+
+  - platform: template
+    name: "Setpoint Delta T"
+    id: setpoint_delta_t
+    icon: mdi:thermostat
+    min_value: 0
+    max_value: 15
+    step: 0.5
+    initial_value: 8.0
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "\u00b0C"
+    on_value:
+      then:
+        - lambda: |-
+            id(delta_t_setpoint) = x;
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Delta T/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 1
+
+  - platform: template
+    name: "Setpoint Delta T Minimo"
+    id: setpoint_delta_min
+    icon: mdi:thermostat
+    min_value: 0.5
+    max_value: 5.0
+    step: 0.1
+    initial_value: 2.0
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "\u00b0C"
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Delta T Minimo/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 2
+
+  - platform: template
+    name: "Setpoint Massimo Serbatoio 1"
+    id: setpoint_max_S1
+    icon: mdi:thermometer_alert
+    min_value: 50
+    max_value: 90
+    step: 1
+    initial_value: 70
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "\u00b0C"
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Serbatoio 1 massimo/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 4
+
+  - platform: template
+    name: "Setpoint Massimo Serbatoio 2"
+    id: setpoint_max_S2
+    icon: mdi:thermometer_alert
+    min_value: 40
+    max_value: 70
+    step: 1
+    initial_value: 55
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "\u00b0C"
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: ${main_topic}/${setpoint_topic}/Serbatoio 2 massimo/state
+            payload: !lambda 'return to_string(x);'
+            retain: True
+    web_server:
+      sorting_group_id: ordine_config
+      sorting_weight: 3
+
+  - platform: template
+    name: "PWM (%)"
+    id: pwm_percentuale
+    icon: mdi:percent
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    restore_value: true
+    initial_value: 0
+    optimistic: true
+    on_value:
+      then:
+        - output.set_level:
+            id: pompa1dimmer
+            level: !lambda 'return x / 100.0;'
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 1/PWM/state
+            payload: !lambda 'return to_string((int)x);'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa1
+      sorting_weight: 2
+
+  - platform: template
+    name: "Velocita"
+    id: velocita_pompa2
+    icon: mdi:speed
+    min_value: 1
+    max_value: 3
+    step: 1
+    unit_of_measurement: "liv"
+    optimistic: true
+    on_value:
+      then:
+        - lambda: |-
+            if (x < 1 || x > 3) {
+              ESP_LOGW("pompa2", "Valore fuori range per Velocita Pompa 2: %.1f. Reimposto a 1.", x);
+              id(velocita_pompa2).publish_state(1);
+            } else {
+              ESP_LOGI("pompa2", "Velocita Pompa 2 impostata a: %d", int(x));
+            }
+        - mqtt.publish:
+            topic: ${main_topic}/${pompe_topic}/Pompa 2/Parametri/Velocita/state
+            payload: !lambda 'return to_string(int(x));'
+            retain: true
+    web_server:
+      sorting_group_id: ordine_pompa2
+      sorting_weight: 10

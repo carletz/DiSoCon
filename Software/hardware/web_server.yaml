@@ -1,0 +1,37 @@
+web_server:
+  port: 80
+  version: 3
+  auth:
+    username: carletz
+    password: Metalscga80$
+  sorting_groups:
+    - id: ordine_temp
+      name: "Temperature"
+      sorting_weight: 10
+    - id: ordine_pompa1
+      name: "Pompa Solare"
+      sorting_weight: 20
+    - id: ordine_pompa2
+      name: "Pompa Ricircolo"
+      sorting_weight: 21      
+    - id: ordine_valvola1
+      name: "Valvola 3 vie Solare"
+      sorting_weight: 30
+    - id: ordine_valvola2
+      name: "Valvola di Ricircolo"
+      sorting_weight: 40            
+    - id: ordine_tempi
+      name: "Tempi di funzionamento"
+      sorting_weight: 50
+    - id: ordine_config
+      name: "Configurazione"
+      sorting_weight: 60
+    - id: ordine_sensor
+      name: "Controlli"
+      sorting_weight: 70
+    - id: ordine_dia
+      name: "Diagnostica"
+      sorting_weight: 80
+    - id: ordine_varie
+      name: "Varie"
+      sorting_weight: 90
