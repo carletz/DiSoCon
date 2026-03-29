@@ -230,7 +230,9 @@ The ESP32-S3 implements the following logic layers in ESPHome:
 6. **TRIAC zero-cross firing** — Pump activation is synchronised to the mains zero-crossing via the `ZEROCROSS` interrupt for reduced EMI and inrush.
 
 <div align="center">
-    <img width="40%" src="/Images/Front%20panel.jpg">
+    <img width="30%" src="/Images/3D%20Model%20front.png">
+    <img width="30%" src="/Images/3D%20Model%20back.png">
+    <img width="30%" src="/Images/Front%20panel.jpg">
 </div>
 
 ---
