@@ -70,11 +70,23 @@ The project is split into two physically separate boards that connect via a 10-p
 └─────────────────────────────────────────────────┘
 ```
 
+<div align="center">
+    <img width="50%" src="/Images/Complete%20system%20V2.jpg">
+</div>
+
 ---
 
 ## 📐 Hardware Details
 
 ### Control Board — Full Board V2.0 (6-page schematic)
+
+<div align="center">
+    <img width="40%" src="/Images/3D%20Board%20front%20pinout.png">
+</div>
+
+<div align="center">
+    <img width="40%" src="/Images/3D%20Board%20back%20pinout.png">
+</div>
 
 #### Page 1 · Microcontroller & Power
 
@@ -133,6 +145,14 @@ The project is split into two physically separate boards that connect via a 10-p
 ---
 
 ### Power Board — Power Board V2.0 (2-page schematic)
+
+<div align="center">
+    <img width="40%" src="/Images/3D%20Board%20Power%20front%20pinout.png">
+</div>
+
+<div align="center">
+    <img width="40%" src="/Images/3D%20Board%20Power%20back%20pinout.png">
+</div>
 
 #### Page 1 · Power Supply, Connector & Relays
 
@@ -214,6 +234,10 @@ The ESP32-S3 implements the following logic layers in ESPHome:
    - **Overheating**: Limits pump runtime or diverts flow when tank temperature exceeds maximum.
    - **Sensor fault**: Detects open-circuit (NaN, T < –10°C) or short-circuit (T > 200°C) PT1000 conditions.
 6. **TRIAC zero-cross firing** — Pump activation is synchronised to the mains zero-crossing via the `ZEROCROSS` interrupt for reduced EMI and inrush.
+
+<div align="center">
+    <img width="40%" src="/Images/Front%20panel.jpg">
+</div>
 
 ---
 
