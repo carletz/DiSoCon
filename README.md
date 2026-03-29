@@ -82,9 +82,6 @@ The project is split into two physically separate boards that connect via a 10-p
 
 <div align="center">
     <img width="40%" src="/Images/3D%20Board%20front%20pinout.png">
-</div>
-
-<div align="center">
     <img width="40%" src="/Images/3D%20Board%20back%20pinout.png">
 </div>
 
@@ -148,9 +145,6 @@ The project is split into two physically separate boards that connect via a 10-p
 
 <div align="center">
     <img width="40%" src="/Images/3D%20Board%20Power%20front%20pinout.png">
-</div>
-
-<div align="center">
     <img width="40%" src="/Images/3D%20Board%20Power%20back%20pinout.png">
 </div>
 
